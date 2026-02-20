@@ -1,0 +1,3 @@
+// Auto-generated fragment for OTA netvars
+// Include this inside the definition of struct OTA_dre_t
+// DO NOT EDIT MANUALLY; edit netvars.csv and regenerate.

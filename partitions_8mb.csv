@@ -1,0 +1,10 @@
+# Name,   Type, SubType, Offset,  Size,   Flags
+nvs,          data, nvs,      ,       16K
+otadata,      data, ota,      ,        8K
+phy_init,     data, phy,      ,        4K
+ota_0,        app,  ota_0,    ,     3968K
+ota_1,        app,  ota_1,    ,     3968K
+storage,      data, nvs,      ,       16K
+nvs_key,      data, nvs_keys, ,        8K, encrypted
+spiffs_storage, data, spiffs, ,      128K
+

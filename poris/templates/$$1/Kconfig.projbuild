@@ -1,0 +1,59 @@
+menu "$$1 settings"
+
+config PORIS_ENABLE_$#1
+    bool "Enable component $$1"
+    default y
+    help
+      Enable/disable component $$1 at Kconfig level.
+      Variant gating is handled by environment variables (PORIS_ENABLE_$#1).
+
+config $#1_USE_THREAD
+    bool "$$1 starts its own thread ($$1 starts its own thread)"
+    default n
+    help
+      If enabled, $$1 will create a FreeRTOS task and call spin()
+      periodically. If disabled, call $$1_spin() yourself from
+      your scheduler.
+    depends on PORIS_ENABLE_$#1
+
+config $#1_PERIOD_MS
+    int "$$1 period (ms)"
+    range 10 600000
+    default 1000
+    depends on $#1_USE_THREAD
+
+config $#1_MINIMIZE_JITTER
+    bool "Enable jitter minimization for execution cycles"
+    default y
+    help
+      If active, the delay between loops will use vTaskDelayUntil() to guarantee long cycles will not shift the period, minimizing jitter.
+      If deactivate, the component will use vTaskDelay() so the time it wait between cycles is the period.  Long cycles will introduce a shift in the period.
+    depends on $#1_USE_THREAD
+
+choice $#1_PIN_CORE
+    prompt "Pin task to core"
+    default $#1_PIN_CORE_ANY
+    depends on $#1_USE_THREAD
+    help
+      Choose which core to pin the task to (or none).
+config $#1_PIN_CORE_ANY
+    bool "Any core (no affinity)"
+config $#1_PIN_CORE_0
+    bool "Core 0"
+config $#1_PIN_CORE_1
+    bool "Core 1"
+endchoice
+
+config $#1_TASK_STACK
+    int "Task stack size (bytes)"
+    range 2048 65536
+    default 4096
+    depends on $#1_USE_THREAD
+
+config $#1_TASK_PRIO
+    int "Task priority"
+    range 1 24
+    default 5
+    depends on $#1_USE_THREAD
+
+endmenu

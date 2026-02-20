@@ -1,0 +1,8 @@
+// Auto-generated fragment for PrjCfg netvars
+// Included from PrjCfg_netvars.c
+// DO NOT EDIT MANUALLY; edit netvars.csv and regenerate.
+
+    { "skip_ota", "otaskip", "otaskip", "config", "ota", NETVARS_TYPE_BOOL, PRJCFG_NVS_LOADSAVE, true, NETVARS_JSON_MODE_INOUT, NETVARS_JSON_REPR_AUTO, 0, (void*)&(PrjCfg_dre.skip_ota), 1 },
+    { "ip_address", NULL, "ip", "config", "net", NETVARS_TYPE_STRING, PRJCFG_NVS_NONE, true, NETVARS_JSON_MODE_OUT, NETVARS_JSON_REPR_AUTO, PRJCFG_IPADDRESS_MAX_LEN, (void*)(PrjCfg_dre.ip_address), 1 },
+    { "eth_mac", NULL, "eth_mac", "config", "net", NETVARS_TYPE_U8, PRJCFG_NVS_NONE, true, NETVARS_JSON_MODE_OUT, NETVARS_JSON_REPR_AUTO, PRJCFG_MAC_LEN, (void*)&(PrjCfg_dre.eth_mac), 1 },
+    { "unique_id", "unique_id", "unique_id", "config", "device", NETVARS_TYPE_STRING, PRJCFG_NVS_LOADSAVE, true, NETVARS_JSON_MODE_INOUT, NETVARS_JSON_REPR_AUTO, PRJCFG_UNIQUEID_MAX_LEN, (void*)(PrjCfg_dre.unique_id), 1 },

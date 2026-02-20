@@ -1,0 +1,133 @@
+menu "PPInjectorUI settings"
+
+config PORIS_ENABLE_PPINJECTORUI
+    bool "Enable component PPInjectorUI"
+    default y
+    help
+      Enable/disable component PPInjectorUI at Kconfig level.
+      Variant gating is handled by environment variables (PORIS_ENABLE_PPINJECTORUI).
+
+config PPINJECTORUI_USE_THREAD
+    bool "PPInjectorUI starts its own thread (PPInjectorUI starts its own thread)"
+    default n
+    help
+      If enabled, PPInjectorUI will create a FreeRTOS task and call spin()
+      periodically. If disabled, call PPInjectorUI_spin() yourself from
+      your scheduler.
+    depends on PORIS_ENABLE_PPINJECTORUI
+
+config PPINJECTORUI_PERIOD_MS
+    int "PPInjectorUI period (ms)"
+    range 10 600000
+    default 1000
+    depends on PPINJECTORUI_USE_THREAD
+
+config PPINJECTORUI_MINIMIZE_JITTER
+    bool "Enable jitter minimization for execution cycles"
+    default y
+    help
+      If active, the delay between loops will use vTaskDelayUntil() to guarantee long cycles will not shift the period, minimizing jitter.
+      If deactivate, the component will use vTaskDelay() so the time it wait between cycles is the period.  Long cycles will introduce a shift in the period.
+    depends on PPINJECTORUI_USE_THREAD
+
+choice PPINJECTORUI_PIN_CORE
+    prompt "Pin task to core"
+    default PPINJECTORUI_PIN_CORE_ANY
+    depends on PPINJECTORUI_USE_THREAD
+    help
+      Choose which core to pin the task to (or none).
+config PPINJECTORUI_PIN_CORE_ANY
+    bool "Any core (no affinity)"
+config PPINJECTORUI_PIN_CORE_0
+    bool "Core 0"
+config PPINJECTORUI_PIN_CORE_1
+    bool "Core 1"
+endchoice
+
+config PPINJECTORUI_TASK_STACK
+    int "Task stack size (bytes)"
+    range 2048 65536
+    default 4096
+    depends on PPINJECTORUI_USE_THREAD
+
+config PPINJECTORUI_TASK_PRIO
+    int "Task priority"
+    range 1 24
+    default 5
+    depends on PPINJECTORUI_USE_THREAD
+
+config PPINJECTORUI_UART_ENABLE
+    bool "Enable UART machine link"
+    default n
+    depends on PORIS_ENABLE_PPINJECTORUI
+    help
+      Enable UART transport for PPInjectorUI machine protocol.
+
+config PPINJECTORUI_UART_PORT
+    int "UART port number"
+    range 0 2
+    default 1
+    depends on PPINJECTORUI_UART_ENABLE
+    help
+      ESP-IDF UART port index.
+
+config PPINJECTORUI_UART_BAUD
+    int "UART baudrate"
+    range 1200 2000000
+    default 115200
+    depends on PPINJECTORUI_UART_ENABLE
+
+config PPINJECTORUI_UART_TX_GPIO
+    int "UART TX GPIO"
+    range -1 48
+    default 44
+    depends on PPINJECTORUI_UART_ENABLE
+    help
+      Waveshare 4.3B RS485 TX default is GPIO44.
+
+config PPINJECTORUI_UART_RX_GPIO
+    int "UART RX GPIO"
+    range -1 48
+    default 43
+    depends on PPINJECTORUI_UART_ENABLE
+    help
+      Waveshare 4.3B RS485 RX default is GPIO43.
+
+config PPINJECTORUI_UART_RX_BUF_SIZE
+    int "UART RX driver buffer size"
+    range 256 8192
+    default 1024
+    depends on PPINJECTORUI_UART_ENABLE
+
+config PPINJECTORUI_UART_TX_BUF_SIZE
+    int "UART TX driver buffer size"
+    range 0 8192
+    default 0
+    depends on PPINJECTORUI_UART_ENABLE
+
+config PPINJECTORUI_ENABLE_PRD_UI
+    bool "Enable PPInjectorUI PrdUi layer"
+    default y
+    depends on PORIS_ENABLE_PPINJECTORUI
+    help
+      Enables the PrdUi layer (mould/common UI runtime on top of EEZ screens).
+      Can be disabled temporarily during incremental bring-up/debug.
+
+config PPINJECTORUI_KEYBOARD_DYNAMIC_ANCHOR
+    bool "Adaptive keyboard anchor (top/bottom by focused field)"
+    default y
+    depends on PPINJECTORUI_ENABLE_PRD_UI
+    help
+      When enabled, PPInjectorUI aligns the keyboard at the bottom for fields
+      in the upper half of the screen and at the top for fields in the lower
+      half. This helps avoid covering the active field.
+
+config PPINJECTORUI_STORAGE_SELFTEST
+    bool "Run PPInjectorUI storage self-test at boot"
+    default n
+    depends on PORIS_ENABLE_PPINJECTORUI
+    help
+      Writes 3 synthetic mould profiles to SPIFFS, reloads them and logs a dump.
+      This test is independent from PrdUi screen activation.
+
+endmenu

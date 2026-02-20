@@ -1,0 +1,484 @@
+menu "TouchScreen settings"
+
+config PORIS_ENABLE_TOUCHSCREEN
+    bool "Enable component TouchScreen"
+    default y
+    help
+      Enable/disable component TouchScreen at Kconfig level.
+      Variant gating is handled by environment variables (PORIS_ENABLE_TOUCHSCREEN).
+
+config TOUCHSCREEN_USE_THREAD
+    bool "TouchScreen starts its own thread (TouchScreen starts its own thread)"
+    default n
+    help
+      If enabled, TouchScreen will create a FreeRTOS task and call spin()
+      periodically. If disabled, call TouchScreen_spin() yourself from
+      your scheduler.
+    depends on PORIS_ENABLE_TOUCHSCREEN
+
+config TOUCHSCREEN_PERIOD_MS
+    int "TouchScreen period (ms)"
+    range 10 600000
+    default 1000
+    depends on TOUCHSCREEN_USE_THREAD
+
+config TOUCHSCREEN_MINIMIZE_JITTER
+    bool "Enable jitter minimization for execution cycles"
+    default y
+    help
+      If active, the delay between loops will use vTaskDelayUntil() to guarantee long cycles will not shift the period, minimizing jitter.
+      If deactivate, the component will use vTaskDelay() so the time it wait between cycles is the period.  Long cycles will introduce a shift in the period.
+    depends on TOUCHSCREEN_USE_THREAD
+
+choice TOUCHSCREEN_PIN_CORE
+    prompt "Pin task to core"
+    default TOUCHSCREEN_PIN_CORE_ANY
+    depends on TOUCHSCREEN_USE_THREAD
+    help
+      Choose which core to pin the task to (or none).
+config TOUCHSCREEN_PIN_CORE_ANY
+    bool "Any core (no affinity)"
+config TOUCHSCREEN_PIN_CORE_0
+    bool "Core 0"
+config TOUCHSCREEN_PIN_CORE_1
+    bool "Core 1"
+endchoice
+
+config TOUCHSCREEN_TASK_STACK
+    int "Task stack size (bytes)"
+    range 2048 65536
+    default 4096
+    depends on TOUCHSCREEN_USE_THREAD
+
+config TOUCHSCREEN_TASK_PRIO
+    int "Task priority"
+    range 1 24
+    default 5
+    depends on TOUCHSCREEN_USE_THREAD
+
+endmenu
+
+
+menu "Touchscreen Configuration"
+
+    menu "Display"
+        choice TOUCHSCREEN_DISPLAY_BACKEND
+            prompt "Display backend"
+            default TOUCHSCREEN_DISPLAY_BACKEND_WAVESHARE
+            help
+              Select the hardware backend used to initialize the LCD+touch and bind it to LVGL.
+
+        config TOUCHSCREEN_DISPLAY_BACKEND_WAVESHARE
+            bool "Waveshare ESP32-S3 Touch LCD 4.3B (RGB + GT911)"
+
+        config TOUCHSCREEN_DISPLAY_BACKEND_4DS
+            bool "4DSystems GEN4-ESP32-43CT-CLB (TBD)"
+
+        endchoice
+
+        choice TOUCHSCREEN_RGB_PANEL_PROFILE
+            prompt "RGB panel profile"
+            default TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            depends on TOUCHSCREEN_DISPLAY_BACKEND_WAVESHARE
+            help
+              Select a base RGB+Touch profile. You can still override individual
+              pins/timings below from Kconfig/default overlays.
+
+        config TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            bool "Waveshare 4.3B (800x480, GT911 on I2C 8/9, CH422G BL)"
+
+        config TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            bool "Elecrow 5\" (800x480, GT911 on I2C 19/20, BL on GPIO)"
+
+        endchoice
+
+        config TOUCHSCREEN_LCD_H_RES
+            int "LCD horizontal resolution"
+            range 1 4096
+            default 800
+
+        config TOUCHSCREEN_LCD_V_RES
+            int "LCD vertical resolution"
+            range 1 4096
+            default 480
+
+        config TOUCHSCREEN_LCD_PIXEL_CLOCK_HZ
+            int "LCD pixel clock (Hz)"
+            range 1000000 80000000
+            default 16000000 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 15000000 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 16000000
+
+        config TOUCHSCREEN_LCD_HSYNC_PULSE_WIDTH
+            int "LCD hsync pulse width"
+            range 1 1024
+            default 4
+
+        config TOUCHSCREEN_LCD_HSYNC_BACK_PORCH
+            int "LCD hsync back porch"
+            range 0 4096
+            default 8 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 43 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 8
+
+        config TOUCHSCREEN_LCD_HSYNC_FRONT_PORCH
+            int "LCD hsync front porch"
+            range 0 4096
+            default 8
+
+        config TOUCHSCREEN_LCD_VSYNC_PULSE_WIDTH
+            int "LCD vsync pulse width"
+            range 1 1024
+            default 4
+
+        config TOUCHSCREEN_LCD_VSYNC_BACK_PORCH
+            int "LCD vsync back porch"
+            range 0 4096
+            default 8 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 12 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 8
+
+        config TOUCHSCREEN_LCD_VSYNC_FRONT_PORCH
+            int "LCD vsync front porch"
+            range 0 4096
+            default 8
+
+        config TOUCHSCREEN_LCD_RGB_DE_GPIO
+            int "LCD DE GPIO"
+            range -1 48
+            default 5 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 40 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 5
+
+        config TOUCHSCREEN_LCD_RGB_VSYNC_GPIO
+            int "LCD VSYNC GPIO"
+            range -1 48
+            default 3 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 41 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 3
+
+        config TOUCHSCREEN_LCD_RGB_HSYNC_GPIO
+            int "LCD HSYNC GPIO"
+            range -1 48
+            default 46 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 39 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 46
+
+        config TOUCHSCREEN_LCD_RGB_PCLK_GPIO
+            int "LCD PCLK GPIO"
+            range -1 48
+            default 7 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 0 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 7
+
+        config TOUCHSCREEN_LCD_RGB_D0_GPIO
+            int "LCD RGB D0 GPIO"
+            range -1 48
+            default 14 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 8 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 14
+
+        config TOUCHSCREEN_LCD_RGB_D1_GPIO
+            int "LCD RGB D1 GPIO"
+            range -1 48
+            default 38 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 3 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 38
+
+        config TOUCHSCREEN_LCD_RGB_D2_GPIO
+            int "LCD RGB D2 GPIO"
+            range -1 48
+            default 18 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 46 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 18
+
+        config TOUCHSCREEN_LCD_RGB_D3_GPIO
+            int "LCD RGB D3 GPIO"
+            range -1 48
+            default 17 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 9 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 17
+
+        config TOUCHSCREEN_LCD_RGB_D4_GPIO
+            int "LCD RGB D4 GPIO"
+            range -1 48
+            default 10 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 1 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 10
+
+        config TOUCHSCREEN_LCD_RGB_D5_GPIO
+            int "LCD RGB D5 GPIO"
+            range -1 48
+            default 39 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 5 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 39
+
+        config TOUCHSCREEN_LCD_RGB_D6_GPIO
+            int "LCD RGB D6 GPIO"
+            range -1 48
+            default 0 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 6 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 0
+
+        config TOUCHSCREEN_LCD_RGB_D7_GPIO
+            int "LCD RGB D7 GPIO"
+            range -1 48
+            default 45 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 7 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 45
+
+        config TOUCHSCREEN_LCD_RGB_D8_GPIO
+            int "LCD RGB D8 GPIO"
+            range -1 48
+            default 48 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 15 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 48
+
+        config TOUCHSCREEN_LCD_RGB_D9_GPIO
+            int "LCD RGB D9 GPIO"
+            range -1 48
+            default 47 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 16 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 47
+
+        config TOUCHSCREEN_LCD_RGB_D10_GPIO
+            int "LCD RGB D10 GPIO"
+            range -1 48
+            default 21 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 4 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 21
+
+        config TOUCHSCREEN_LCD_RGB_D11_GPIO
+            int "LCD RGB D11 GPIO"
+            range -1 48
+            default 1 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 45 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 1
+
+        config TOUCHSCREEN_LCD_RGB_D12_GPIO
+            int "LCD RGB D12 GPIO"
+            range -1 48
+            default 2 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 48 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 2
+
+        config TOUCHSCREEN_LCD_RGB_D13_GPIO
+            int "LCD RGB D13 GPIO"
+            range -1 48
+            default 42 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 47 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 42
+
+        config TOUCHSCREEN_LCD_RGB_D14_GPIO
+            int "LCD RGB D14 GPIO"
+            range -1 48
+            default 41 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 21 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 41
+
+        config TOUCHSCREEN_LCD_RGB_D15_GPIO
+            int "LCD RGB D15 GPIO"
+            range -1 48
+            default 40 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 14 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 40
+
+        config TOUCHSCREEN_TOUCH_I2C_PORT
+            int "Touch I2C port"
+            range 0 1
+            default 0
+
+        config TOUCHSCREEN_TOUCH_I2C_SDA_GPIO
+            int "Touch I2C SDA GPIO"
+            range -1 48
+            default 8 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 19 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 8
+
+        config TOUCHSCREEN_TOUCH_I2C_SCL_GPIO
+            int "Touch I2C SCL GPIO"
+            range -1 48
+            default 9 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default 20 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 9
+
+        config TOUCHSCREEN_TOUCH_I2C_FREQ_HZ
+            int "Touch I2C clock (Hz)"
+            range 10000 1000000
+            default 400000
+
+        config TOUCHSCREEN_TOUCH_RESET_GPIO
+            int "Touch reset GPIO"
+            range -1 48
+            default -1
+
+        config TOUCHSCREEN_TOUCH_INT_GPIO
+            int "Touch interrupt GPIO"
+            range -1 48
+            default -1
+
+        config TOUCHSCREEN_TOUCH_RESET_BY_CH422G
+            bool "Reset touch via CH422G sequence"
+            default y if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default n if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default y
+            help
+              Waveshare 4.3B uses a CH422G expander and requires a specific
+              sequence to release GT911 reset.
+
+        config TOUCHSCREEN_TOUCH_RESET_SEQ_GPIO
+            int "Touch reset-sequence GPIO (CH422G profile)"
+            range -1 48
+            default 4 if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default -1 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default 4
+            depends on TOUCHSCREEN_TOUCH_RESET_BY_CH422G
+
+        choice TOUCHSCREEN_BACKLIGHT_CONTROL
+            prompt "Backlight control method"
+            default TOUCHSCREEN_BACKLIGHT_CONTROL_CH422G if TOUCHSCREEN_RGB_PANEL_PROFILE_WAVESHARE
+            default TOUCHSCREEN_BACKLIGHT_CONTROL_GPIO if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default TOUCHSCREEN_BACKLIGHT_CONTROL_NONE
+
+        config TOUCHSCREEN_BACKLIGHT_CONTROL_NONE
+            bool "No backlight control"
+
+        config TOUCHSCREEN_BACKLIGHT_CONTROL_CH422G
+            bool "CH422G over I2C (Waveshare style)"
+
+        config TOUCHSCREEN_BACKLIGHT_CONTROL_GPIO
+            bool "Dedicated backlight GPIO"
+
+        endchoice
+
+        config TOUCHSCREEN_BACKLIGHT_GPIO
+            int "Backlight GPIO"
+            range -1 48
+            default 2 if TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW
+            default -1
+            depends on TOUCHSCREEN_BACKLIGHT_CONTROL_GPIO
+
+        config TOUCHSCREEN_BACKLIGHT_ON_LEVEL
+            int "Backlight active level"
+            range 0 1
+            default 1
+            depends on TOUCHSCREEN_BACKLIGHT_CONTROL_GPIO
+
+        config TOUCHSCREEN_BACKLIGHT_ENABLE_AT_INIT
+            bool "Enable backlight at display init"
+            default y
+
+        config LCD_RGB_BOUNCE_BUFFER_HEIGHT
+            int "RGB Bounce buffer height"
+            default 10
+            help
+                Height of bounce buffer. The width of the buffer is the same as that of the LCD.
+
+        config LVGL_PORT_TASK_MAX_DELAY_MS
+            int "LVGL timer task maximum delay (ms)"
+            default 500
+            range 2 2000  # Example range, adjust as needed
+            help
+            The maximum delay of the LVGL timer task, in milliseconds.
+
+        config LVGL_PORT_TASK_MIN_DELAY_MS
+            int "LVGL timer task minimum delay (ms)"
+            default 10
+            range 1 100  # Example range, adjust as needed
+            help
+            The minimum delay of the LVGL timer task, in milliseconds.
+
+        config LVGL_PORT_TASK_PRIORITY
+            int "LVGL task priority"
+            default 2
+            help
+                The Board Support Package will create a task that will periodically handle LVGL operation in lv_timer_handler().
+
+        config LVGL_PORT_TASK_STACK_SIZE_KB
+            int "LVGL task stack size (KB)"
+            default 6
+            help
+                Size(KB) of LVGL task stack.
+
+        config LVGL_PORT_TASK_CORE
+            int "LVGL timer task core"
+            default -1
+            range -1 1
+            help
+            The core of the LVGL timer task.
+            Set to -1 to not specify the core.
+            Set to 1 only if the SoCs support dual-core, otherwise set to -1 or 0.
+
+        config LVGL_PORT_TICK
+            int "LVGL tick period"
+            default 2
+            range 1 100
+            help
+                Period of LVGL tick timer.
+
+        config LVGL_PORT_AVOID_TEAR_ENABLE
+            bool "Avoid tearing effect"
+            default "n"
+            help
+                Avoid tearing effect through LVGL buffer mode and double frame buffers of RGB LCD. This feature is only available for RGB LCD.
+
+        choice
+            depends on LVGL_PORT_AVOID_TEAR_ENABLE
+            prompt "Select Avoid Tearing Mode"
+            default LVGL_PORT_AVOID_TEAR_MODE_3
+            config LVGL_PORT_AVOID_TEAR_MODE_1
+                bool "Mode1: LCD double-buffer & LVGL full-refresh"
+            config LVGL_PORT_AVOID_TEAR_MODE_2
+                bool "Mode2: LCD triple-buffer & LVGL full-refresh"
+            config LVGL_PORT_AVOID_TEAR_MODE_3
+                bool "Mode3: LCD double-buffer & LVGL direct-mode"
+            help
+                The current tearing prevention mode supports both full refresh mode and direct mode. Tearing prevention mode may consume more PSRAM space
+        endchoice
+
+        config LVGL_PORT_AVOID_TEAR_MODE
+            depends on LVGL_PORT_AVOID_TEAR_ENABLE
+            int
+            default 1 if LVGL_PORT_AVOID_TEAR_MODE_1
+            default 2 if LVGL_PORT_AVOID_TEAR_MODE_2
+            default 3 if LVGL_PORT_AVOID_TEAR_MODE_3
+
+        choice
+            depends on LVGL_PORT_AVOID_TEAR_ENABLE
+            prompt "Select rotation"
+            default LVGL_PORT_ROTATION_0
+            config LVGL_PORT_ROTATION_0
+                bool "Rotation 0"
+            config LVGL_PORT_ROTATION_90
+                bool "Rotation 90"
+            config LVGL_PORT_ROTATION_180
+                bool "Rotation 180"
+            config LVGL_PORT_ROTATION_270
+                bool "Rotation 270"
+        endchoice
+
+        config LVGL_PORT_ROTATION_DEGREE
+            int
+            default 0 if LVGL_PORT_ROTATION_0
+            default 90 if LVGL_PORT_ROTATION_90
+            default 180 if LVGL_PORT_ROTATION_180
+            default 270 if LVGL_PORT_ROTATION_270
+
+        choice
+            depends on !LVGL_PORT_AVOID_TEAR_ENABLE
+            prompt "Select LVGL buffer memory capability"
+            default LVGL_PORT_BUF_INTERNAL
+            config LVGL_PORT_BUF_PSRAM
+                bool "PSRAM memory"
+            config LVGL_PORT_BUF_INTERNAL
+                bool "Internal memory"
+        endchoice
+
+        config LVGL_PORT_BUF_HEIGHT
+            depends on !LVGL_PORT_AVOID_TEAR_ENABLE
+            int "LVGL buffer height"
+            default 100
+            help
+                Height of LVGL buffer. The width of the buffer is the same as that of the LCD.
+    endmenu
+endmenu

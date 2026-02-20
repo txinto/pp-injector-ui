@@ -1,0 +1,12 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# 4MB flash table tuned for PPInjector:
+# - Keep dual OTA slots at 1984K
+# - SPIFFS set to 40K to fit within 4MB including table offset (0x9000)
+nvs,            data, nvs,       ,        0x4000,
+otadata,        data, ota,       ,        0x2000,
+phy_init,       data, phy,       ,        0x1000,
+ota_0,          app,  ota_0,     ,        1984K,
+ota_1,          app,  ota_1,     ,        1984K,
+storage,        data, nvs,       ,        0x4000,
+nvs_key,        data, nvs_keys,  ,        0x2000, encrypted
+spiffs_storage, data, spiffs,    ,        0xA000,

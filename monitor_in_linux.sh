@@ -1,0 +1,1 @@
+$IDF_PYTHON_ENV_PATH/bin/python $IDF_PATH/tools/idf_monitor.py -p $2 -b 115200 --toolchain-prefix riscv32-esp-elf- --make "$IDF_PYTHON_ENV_PATH/bin/python $IDF_PATH/tools/idf.py" --target esp32c6 ./$1/tanknetwifi.elf

@@ -1,0 +1,10 @@
+# Name,   Type, SubType, Offset,  Size,   Flags
+# Flash total: 16MB (0x1000000). Apps alineadas a 64KB.
+nvs,            data, nvs,       ,        16K
+otadata,        data, ota,       ,         8K
+phy_init,       data, phy,       ,         4K
+ota_0,          app,  ota_0,     ,      7616K
+ota_1,          app,  ota_1,     ,      7616K
+storage,        data, nvs,       ,        16K
+nvs_key,        data, nvs_keys,  ,         8K, encrypted
+spiffs_storage, data, spiffs,    ,    0x100000

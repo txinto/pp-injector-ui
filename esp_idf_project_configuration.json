@@ -1,0 +1,60 @@
+{
+  "PPInjectorWave": {
+    "build": {
+      "compileArgs": [],
+      "ninjaArgs": [],
+      "buildDirectoryPath": "./build_ppinjectorwave",
+      "sdkconfigDefaults": [
+        "buildcfg/sdkconfig.PPInjectorWave.defaults"
+      ],
+      "sdkconfigFilePath": "./build_ppinjectorwave/sdkconfig"
+    },
+    "env": {
+      "VARIANT": "PPInjectorWave",
+      "VAR_SUFFIX": "ppinjectorwave"
+    },
+    "idfTarget": "esp32s3",
+    "flashBaudRate": "",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": 0,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "bash poris/prebuild.sh PPInjectorWave",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  },
+  "PPInjectorElecrow": {
+    "build": {
+      "compileArgs": [],
+      "ninjaArgs": [],
+      "buildDirectoryPath": "./build_ppinjectorelecrow",
+      "sdkconfigDefaults": [
+        "buildcfg/sdkconfig.PPInjectorElecrow.defaults"
+      ],
+      "sdkconfigFilePath": "./build_ppinjectorelecrow/sdkconfig"
+    },
+    "env": {
+      "VARIANT": "PPInjectorElecrow",
+      "VAR_SUFFIX": "ppinjectorelecrow"
+    },
+    "idfTarget": "esp32s3",
+    "flashBaudRate": "",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": 0,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "bash poris/prebuild.sh PPInjectorElecrow",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  }
+}

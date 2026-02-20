@@ -1,0 +1,10 @@
+menu "$$1 settings"
+
+config PORIS_ENABLE_$#1
+    bool "Enable component $$1"
+    default y
+    help
+      Enable/disable component $$1 at Kconfig level.
+      Variant gating is handled by environment variables (PORIS_ENABLE_$#1).
+
+endmenu

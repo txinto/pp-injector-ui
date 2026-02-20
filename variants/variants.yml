@@ -1,0 +1,19 @@
+defaults_dir: "sdkcfg"
+out_dir: "buildcfg"
+
+variants:
+  - id: PPInjectorWave
+    target: esp32s3
+    overlays: ["target_esp32s3.defaults","feat_s3_touch.defaults","feat_touchscreen_lvgl.defaults","feat_ppinjector_wave.defaults"]
+    components: ["PrjCfg", "NetVars","Provisioning","OTA","TouchScreen","PPInjectorUI"]
+    extra_env:
+      LOG_LEVEL: "debug"
+      FOO: "bar"
+
+  - id: PPInjectorElecrow
+    target: esp32s3
+    overlays: ["target_esp32s3.defaults","feat_s3_touch.defaults","feat_touchscreen_lvgl_elec.defaults","feat_ppinjector_elec.defaults"]
+    components: ["PrjCfg", "NetVars","Provisioning","OTA","TouchScreen","PPInjectorUI"]
+    extra_env:
+      LOG_LEVEL: "debug"
+      FOO: "bar"

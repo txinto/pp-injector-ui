@@ -1,0 +1,8 @@
+// Auto-generated fragment for Provisioning netvars
+// Included from Provisioning_netvars.c
+// DO NOT EDIT MANUALLY; edit netvars.csv and regenerate.
+
+    { "ip_valid", NULL, "ip_valid", NULL, NULL, NETVARS_TYPE_BOOL, PRJCFG_NVS_NONE, true, NETVARS_JSON_MODE_OUT, NETVARS_JSON_REPR_AUTO, 0, (void*)&(Provisioning_dre.ip_valid), 1 },
+    { "ip_v4", NULL, "ip_v4", NULL, NULL, NETVARS_TYPE_U32, PRJCFG_NVS_NONE, true, NETVARS_JSON_MODE_OUT, NETVARS_JSON_REPR_INVHEX, 0, (void*)&(Provisioning_dre.ip_v4), 1 },
+    { "ip_str", NULL, "ip_str", NULL, NULL, NETVARS_TYPE_STRING, PRJCFG_NVS_NONE, true, NETVARS_JSON_MODE_OUT, NETVARS_JSON_REPR_AUTO, PROVISIONING_IP_STR_MAX_LEN, (void*)(Provisioning_dre.ip_str), 1 },
+    { "ssid", NULL, "ip_str", NULL, NULL, NETVARS_TYPE_STRING, PRJCFG_NVS_NONE, true, NETVARS_JSON_MODE_OUT, NETVARS_JSON_REPR_AUTO, PROVISIONING_SSID_MAX_LEN, (void*)(Provisioning_dre.ssid), 1 },

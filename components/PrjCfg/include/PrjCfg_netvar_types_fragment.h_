@@ -1,0 +1,8 @@
+// Auto-generated fragment for PrjCfg netvars
+// Include this inside the definition of struct PrjCfg_dre_t
+// DO NOT EDIT MANUALLY; edit netvars.csv and regenerate.
+
+    bool skip_ota;
+    char ip_address[PRJCFG_IPADDRESS_MAX_LEN];
+    uint8_t eth_mac[PRJCFG_MAC_LEN];
+    char unique_id[PRJCFG_UNIQUEID_MAX_LEN];

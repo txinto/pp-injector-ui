@@ -1,0 +1,8 @@
+// Auto-generated fragment for Provisioning netvars
+// Include this inside the definition of struct Provisioning_dre_t
+// DO NOT EDIT MANUALLY; edit netvars.csv and regenerate.
+
+    bool ip_valid;
+    uint32_t ip_v4;
+    char ip_str[PROVISIONING_IP_STR_MAX_LEN];
+    char ssid[PROVISIONING_SSID_MAX_LEN];

@@ -1,0 +1,5 @@
+name,c_type,storage_type,scale,nvs_key,json_key,group,module,nvs_mode,json,enabler,json_repr,json_mode
+skip_ota,bool,BOOL,,otaskip,otaskip,config,ota,LOADSAVE,1,,,
+ip_address,char[PRJCFG_IPADDRESS_MAX_LEN],STRING,,,ip,config,net,NONE,1,,,OUT
+eth_mac,uint8_t[PRJCFG_MAC_LEN],U8,,,eth_mac,config,net,NONE,1,,,OUT
+unique_id,char[PRJCFG_UNIQUEID_MAX_LEN],STRING,,unique_id,unique_id,config,device,LOADSAVE,1,,,
