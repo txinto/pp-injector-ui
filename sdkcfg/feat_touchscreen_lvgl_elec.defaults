@@ -24,7 +24,8 @@ CONFIG_LVGL_PORT_TASK_CORE=1
 # Use the panel frame buffers to avoid tearing and skip big mallocs on internal RAM
 CONFIG_LVGL_PORT_AVOID_TEAR_ENABLE=y
 CONFIG_LVGL_PORT_AVOID_TEAR_MODE=3
-CONFIG_LVGL_PORT_ROTATION_DEGREE=0
+CONFIG_LVGL_PORT_ROTATION_270=y
+CONFIG_LVGL_PORT_ROTATION_DEGREE=270
 
 # Fall back to PSRAM for LVGL draw buffer if avoid-tear gets disabled
 CONFIG_LVGL_PORT_BUF_PSRAM=y
