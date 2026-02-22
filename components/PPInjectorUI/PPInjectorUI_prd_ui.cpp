@@ -1,20 +1,20 @@
 #include "PPInjectorUI_prd_ui.h"
-#include "PPInjectorUI_display_comms.h"
 #include "PPInjectorUI.h"
+#include "PPInjectorUI_display_comms.h"
 #include "ui/eez-flow.h"
 #include "ui/fonts.h"
 #include "ui/screens.h"
 
-#include <esp_log.h>
-#include <esp_timer.h>
-#include <esp_spiffs.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <cerrno>
-#include <cstdint>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <esp_log.h>
+#include <esp_spiffs.h>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <vector>
 
 namespace {
@@ -22,9 +22,7 @@ static const char *TAG = "PPInjectorUI_PRD";
 
 class SerialShim {
 public:
-  void println(const char *msg) const {
-    ESP_LOGD(TAG, "%s", msg ? msg : "");
-  }
+  void println(const char *msg) const { ESP_LOGD(TAG, "%s", msg ? msg : ""); }
 
   void printf(const char *fmt, ...) const {
     if (!fmt) {
@@ -45,9 +43,7 @@ static inline uint32_t millis(void) {
   return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
 }
 
-static inline void delay(uint32_t ms) {
-  vTaskDelay(pdMS_TO_TICKS(ms));
-}
+static inline void delay(uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
 namespace Storage {
 static bool s_inited = false;
@@ -56,7 +52,8 @@ static constexpr const char *kSpiffsPartition = "spiffs_storage";
 static constexpr const char *kMouldsPath = "/spiffs/moulds.bin";
 
 void init() {
-  if (s_inited) return;
+  if (s_inited)
+    return;
 
   const esp_vfs_spiffs_conf_t conf = {
       .base_path = kSpiffsBasePath,
@@ -74,8 +71,8 @@ void init() {
   size_t total = 0, used = 0;
   err = esp_spiffs_info(kSpiffsPartition, &total, &used);
   if (err == ESP_OK) {
-    ESP_LOGI(TAG, "SPIFFS mounted (%u/%u bytes used)",
-             (unsigned)used, (unsigned)total);
+    ESP_LOGI(TAG, "SPIFFS mounted (%u/%u bytes used)", (unsigned)used,
+             (unsigned)total);
   } else {
     ESP_LOGW(TAG, "SPIFFS info failed: %s", esp_err_to_name(err));
   }
@@ -85,7 +82,8 @@ void init() {
 
 void loadMoulds(DisplayComms::MouldParams *moulds, int &count, int maxCount) {
   count = 0;
-  if (!s_inited || !moulds || maxCount <= 0) return;
+  if (!s_inited || !moulds || maxCount <= 0)
+    return;
 
   FILE *f = fopen(kMouldsPath, "rb");
   if (!f) {
@@ -106,8 +104,8 @@ void loadMoulds(DisplayComms::MouldParams *moulds, int &count, int maxCount) {
     storedCount = (uint32_t)maxCount;
   }
 
-  size_t readCount = fread(
-      moulds, sizeof(DisplayComms::MouldParams), (size_t)storedCount, f);
+  size_t readCount =
+      fread(moulds, sizeof(DisplayComms::MouldParams), (size_t)storedCount, f);
   fclose(f);
 
   count = (int)readCount;
@@ -119,14 +117,16 @@ void loadMoulds(DisplayComms::MouldParams *moulds, int &count, int maxCount) {
   for (int i = 0; i < count; ++i) {
     const DisplayComms::MouldParams &p = moulds[i];
     ESP_LOGI(TAG,
-             "Storage load [%d] name=%s mode=%s fillVol=%.2f fillSpd=%.2f packVol=%.2f torque=%.2f",
+             "Storage load [%d] name=%s mode=%s fillVol=%.2f fillSpd=%.2f "
+             "packVol=%.2f torque=%.2f",
              i, p.name, p.mode, p.fillVolume, p.fillSpeed, p.packVolume,
              p.injectTorque);
   }
 }
 
 void saveMoulds(const DisplayComms::MouldParams *moulds, int count) {
-  if (!s_inited || !moulds || count < 0) return;
+  if (!s_inited || !moulds || count < 0)
+    return;
 
   FILE *f = fopen(kMouldsPath, "wb");
   if (!f) {
@@ -142,13 +142,13 @@ void saveMoulds(const DisplayComms::MouldParams *moulds, int count) {
     return;
   }
 
-  size_t written = fwrite(
-      moulds, sizeof(DisplayComms::MouldParams), (size_t)count, f);
+  size_t written =
+      fwrite(moulds, sizeof(DisplayComms::MouldParams), (size_t)count, f);
   fclose(f);
 
   if (written != (size_t)count) {
-    ESP_LOGE(TAG, "Storage: short write (%u/%u)",
-             (unsigned)written, (unsigned)count);
+    ESP_LOGE(TAG, "Storage: short write (%u/%u)", (unsigned)written,
+             (unsigned)count);
     return;
   }
 
@@ -293,12 +293,8 @@ inline void uiYield() { delay(0); }
 
 void disablePlungerAreaScroll() {
   lv_obj_t *locked[] = {
-      objects.main,
-      objects.mould_settings,
-      objects.common_settings,
-      objects.plunger_tip,
-      objects.obj0,
-      objects.obj2,
+      objects.main,        objects.mould_settings, objects.common_settings,
+      objects.plunger_tip, objects.obj0,           objects.obj2,
       objects.obj5,
   };
 
@@ -321,8 +317,7 @@ static void styleKeyboardChrome(lv_obj_t *keyboard) {
 
   lv_obj_set_style_border_color(keyboard, lv_color_hex(0xffec18),
                                 LV_PART_MAIN | LV_STATE_DEFAULT);
-  lv_obj_set_style_border_width(keyboard, 2,
-                                LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_border_width(keyboard, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER,
                           LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x1a222b),
@@ -330,10 +325,11 @@ static void styleKeyboardChrome(lv_obj_t *keyboard) {
 }
 
 void logUiState(const char *tag) {
-  Serial.printf(
-      "PRD_UI[%s]: screen=%d count=%d selected=%d lastTapped=%d lastName='%s'\n",
-      tag ? tag : "?", static_cast<int>(g_currentScreen), ui.mouldProfileCount,
-      ui.selectedMould, ui.lastTappedMould, ui.lastMouldName);
+  Serial.printf("PRD_UI[%s]: screen=%d count=%d selected=%d lastTapped=%d "
+                "lastName='%s'\n",
+                tag ? tag : "?", static_cast<int>(g_currentScreen),
+                ui.mouldProfileCount, ui.selectedMould, ui.lastTappedMould,
+                ui.lastMouldName);
 }
 
 inline void hideIfPresent(lv_obj_t *obj) {
@@ -397,8 +393,8 @@ void setNotice(lv_obj_t *label, const char *text,
   setLabelTextIfChanged(label, text ? text : "");
 }
 
-void keepTextareaVisibleAboveKeyboard(lv_obj_t *scrollContainer, lv_obj_t *textarea,
-                                      lv_obj_t *keyboard) {
+void keepTextareaVisibleAboveKeyboard(lv_obj_t *scrollContainer,
+                                      lv_obj_t *textarea, lv_obj_t *keyboard) {
   if (!isObjReady(scrollContainer) || !isObjReady(textarea) ||
       !isObjReady(keyboard)) {
     return;
@@ -470,7 +466,8 @@ void alignKeyboardForField(lv_obj_t *keyboard, lv_obj_t *screen,
   lv_obj_get_coords(screen, &screenArea);
   lv_obj_get_coords(textarea, &fieldArea);
 
-  const lv_coord_t screenMidY = screenArea.y1 + ((screenArea.y2 - screenArea.y1) / 2);
+  const lv_coord_t screenMidY =
+      screenArea.y1 + ((screenArea.y2 - screenArea.y1) / 2);
   const lv_coord_t fieldY = fieldArea.y1;
   const bool useBottom = fieldY < screenMidY;
 
@@ -492,8 +489,9 @@ void alignKeyboardForField(lv_obj_t *keyboard, lv_obj_t *screen,
 lv_obj_t *createButton(lv_obj_t *parent, const char *text, lv_coord_t x,
                        lv_coord_t y, lv_coord_t w, lv_coord_t h,
                        lv_event_cb_t cb, void *userData = nullptr) {
-  Serial.printf("PRD_UI: createButton begin text='%s' parent=%p cb=%p user=%p\n",
-                text ? text : "(null)", (void *)parent, (void *)cb, userData);
+  Serial.printf(
+      "PRD_UI: createButton begin text='%s' parent=%p cb=%p user=%p\n",
+      text ? text : "(null)", (void *)parent, (void *)cb, userData);
   lv_obj_t *button = lv_button_create(parent);
   Serial.printf("PRD_UI: createButton after lv_button_create button=%p\n",
                 (void *)button);
@@ -550,32 +548,32 @@ void hideLegacyWidgets() {
       objects.plunger_tip__refill_band_12, objects.plunger_tip__refill_band_13,
       objects.plunger_tip__refill_band_14, objects.plunger_tip__refill_band_15,
 
-      objects.obj0__refill_band_0,  objects.obj0__refill_band_1,
-      objects.obj0__refill_band_2,  objects.obj0__refill_band_3,
-      objects.obj0__refill_band_4,  objects.obj0__refill_band_5,
-      objects.obj0__refill_band_6,  objects.obj0__refill_band_7,
-      objects.obj0__refill_band_8,  objects.obj0__refill_band_9,
-      objects.obj0__refill_band_10, objects.obj0__refill_band_11,
-      objects.obj0__refill_band_12, objects.obj0__refill_band_13,
-      objects.obj0__refill_band_14, objects.obj0__refill_band_15,
+      objects.obj0__refill_band_0,         objects.obj0__refill_band_1,
+      objects.obj0__refill_band_2,         objects.obj0__refill_band_3,
+      objects.obj0__refill_band_4,         objects.obj0__refill_band_5,
+      objects.obj0__refill_band_6,         objects.obj0__refill_band_7,
+      objects.obj0__refill_band_8,         objects.obj0__refill_band_9,
+      objects.obj0__refill_band_10,        objects.obj0__refill_band_11,
+      objects.obj0__refill_band_12,        objects.obj0__refill_band_13,
+      objects.obj0__refill_band_14,        objects.obj0__refill_band_15,
 
-      objects.obj2__refill_band_0,  objects.obj2__refill_band_1,
-      objects.obj2__refill_band_2,  objects.obj2__refill_band_3,
-      objects.obj2__refill_band_4,  objects.obj2__refill_band_5,
-      objects.obj2__refill_band_6,  objects.obj2__refill_band_7,
-      objects.obj2__refill_band_8,  objects.obj2__refill_band_9,
-      objects.obj2__refill_band_10, objects.obj2__refill_band_11,
-      objects.obj2__refill_band_12, objects.obj2__refill_band_13,
-      objects.obj2__refill_band_14, objects.obj2__refill_band_15,
+      objects.obj2__refill_band_0,         objects.obj2__refill_band_1,
+      objects.obj2__refill_band_2,         objects.obj2__refill_band_3,
+      objects.obj2__refill_band_4,         objects.obj2__refill_band_5,
+      objects.obj2__refill_band_6,         objects.obj2__refill_band_7,
+      objects.obj2__refill_band_8,         objects.obj2__refill_band_9,
+      objects.obj2__refill_band_10,        objects.obj2__refill_band_11,
+      objects.obj2__refill_band_12,        objects.obj2__refill_band_13,
+      objects.obj2__refill_band_14,        objects.obj2__refill_band_15,
 
-      objects.obj5__refill_band_0,  objects.obj5__refill_band_1,
-      objects.obj5__refill_band_2,  objects.obj5__refill_band_3,
-      objects.obj5__refill_band_4,  objects.obj5__refill_band_5,
-      objects.obj5__refill_band_6,  objects.obj5__refill_band_7,
-      objects.obj5__refill_band_8,  objects.obj5__refill_band_9,
-      objects.obj5__refill_band_10, objects.obj5__refill_band_11,
-      objects.obj5__refill_band_12, objects.obj5__refill_band_13,
-      objects.obj5__refill_band_14, objects.obj5__refill_band_15,
+      objects.obj5__refill_band_0,         objects.obj5__refill_band_1,
+      objects.obj5__refill_band_2,         objects.obj5__refill_band_3,
+      objects.obj5__refill_band_4,         objects.obj5__refill_band_5,
+      objects.obj5__refill_band_6,         objects.obj5__refill_band_7,
+      objects.obj5__refill_band_8,         objects.obj5__refill_band_9,
+      objects.obj5__refill_band_10,        objects.obj5__refill_band_11,
+      objects.obj5__refill_band_12,        objects.obj5__refill_band_13,
+      objects.obj5__refill_band_14,        objects.obj5__refill_band_15,
   };
 
   for (lv_obj_t *band : legacy_refill_bands) {
@@ -602,7 +600,8 @@ void updateNetworkGestureIndicator(uint32_t heldMs) {
   }
 
   if (heldMs >= NETWORK_HOLD_REPROVISION_MS) {
-    lv_obj_set_style_bg_color(ui.networkGestureIndicator, lv_color_hex(0xc62828),
+    lv_obj_set_style_bg_color(ui.networkGestureIndicator,
+                              lv_color_hex(0xc62828),
                               LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui.networkGestureIndicator, LV_OPA_COVER,
                             LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -610,8 +609,10 @@ void updateNetworkGestureIndicator(uint32_t heldMs) {
     return;
   }
 
-  if (heldMs >= NETWORK_HOLD_OTA_MS && PPInjectorUI_wifi_credentials_available()) {
-    lv_obj_set_style_bg_color(ui.networkGestureIndicator, lv_color_hex(0x2e7d32),
+  if (heldMs >= NETWORK_HOLD_OTA_MS &&
+      PPInjectorUI_wifi_credentials_available()) {
+    lv_obj_set_style_bg_color(ui.networkGestureIndicator,
+                              lv_color_hex(0x2e7d32),
                               LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui.networkGestureIndicator, LV_OPA_COVER,
                             LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -620,7 +621,8 @@ void updateNetworkGestureIndicator(uint32_t heldMs) {
   }
 
   if (heldMs >= NETWORK_HOLD_GRAY_MS) {
-    lv_obj_set_style_bg_color(ui.networkGestureIndicator, lv_color_hex(0x909090),
+    lv_obj_set_style_bg_color(ui.networkGestureIndicator,
+                              lv_color_hex(0x909090),
                               LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui.networkGestureIndicator, LV_OPA_COVER,
                             LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -676,7 +678,8 @@ void onNetworkGestureEvent(lv_event_t *event) {
       uint32_t heldMs = millis() - ui.networkGestureStartMs;
       if (heldMs >= NETWORK_HOLD_REPROVISION_MS) {
         ESP_LOGW(TAG, "Gesture action: re-provision requested");
-        PPInjectorUI_request_system_action(PPInjectorUI_system_action_reprovision);
+        PPInjectorUI_request_system_action(
+            PPInjectorUI_system_action_reprovision);
       } else if (heldMs >= NETWORK_HOLD_OTA_MS &&
                  PPInjectorUI_wifi_credentials_available()) {
         ESP_LOGW(TAG, "Gesture action: OTA requested");
@@ -699,8 +702,8 @@ void createNetworkGestureUi() {
   lv_obj_set_size(ui.networkGestureZone, 140, 140);
   lv_obj_align(ui.networkGestureZone, LV_ALIGN_TOP_RIGHT, -4, 4);
   lv_obj_add_flag(ui.networkGestureZone, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(ui.networkGestureZone, onNetworkGestureEvent, LV_EVENT_ALL,
-                      nullptr);
+  lv_obj_add_event_cb(ui.networkGestureZone, onNetworkGestureEvent,
+                      LV_EVENT_ALL, nullptr);
 
   ui.networkGestureIndicator = lv_obj_create(top);
   lv_obj_remove_style_all(ui.networkGestureIndicator);
@@ -828,10 +831,11 @@ void onNavigate(lv_event_t *event) {
   logUiState("onNavigate.before");
   auto navigate_async = [](void *userData) {
     const intptr_t asyncTarget = reinterpret_cast<intptr_t>(userData);
-    eez_flow_set_screen(static_cast<int16_t>(asyncTarget), LV_SCR_LOAD_ANIM_NONE, 0,
-                        0);
+    eez_flow_set_screen(static_cast<int16_t>(asyncTarget),
+                        LV_SCR_LOAD_ANIM_NONE, 0, 0);
     Serial.printf("PRD_UI: onNavigate async applied target=%d now screen=%d\n",
-                  static_cast<int>(asyncTarget), static_cast<int>(g_currentScreen));
+                  static_cast<int>(asyncTarget),
+                  static_cast<int>(g_currentScreen));
     logUiState("onNavigate.after");
   };
   lv_async_call(navigate_async, reinterpret_cast<void *>(target));
@@ -883,39 +887,42 @@ void syncMouldSendEditEnablement() {
   bool hasSelection =
       ui.selectedMould >= 0 && ui.selectedMould < ui.mouldProfileCount;
 
-  Serial.printf("PRD_UI: sync begin sel=%d count=%d hasSel=%d edit=%p send=%p del=%p\n",
-                ui.selectedMould, ui.mouldProfileCount,
-                static_cast<int>(hasSelection),
-                (void *)ui.mouldButtonEdit, (void *)ui.mouldButtonSend,
-                (void *)ui.mouldButtonDelete);
+  // Serial.printf("PRD_UI: sync begin sel=%d count=%d hasSel=%d edit=%p send=%p
+  // del=%p\n",
+  //               ui.selectedMould, ui.mouldProfileCount,
+  //               static_cast<int>(hasSelection),
+  //               (void *)ui.mouldButtonEdit, (void *)ui.mouldButtonSend,
+  //               (void *)ui.mouldButtonDelete);
 
-  Serial.println("PRD_UI: sync before edit");
+  // Serial.println("PRD_UI: sync before edit");
   setButtonEnabled(ui.mouldButtonEdit, hasSelection);
-  Serial.println("PRD_UI: sync after edit");
+  // Serial.println("PRD_UI: sync after edit");
 
-  Serial.println("PRD_UI: sync before safeForUpdate");
+  // Serial.println("PRD_UI: sync before safeForUpdate");
   bool safeForUpdate = DisplayComms::isSafeForUpdate();
-  Serial.printf("PRD_UI: sync safeForUpdate=%d\n", static_cast<int>(safeForUpdate));
+  // Serial.printf("PRD_UI: sync safeForUpdate=%d\n",
+  // static_cast<int>(safeForUpdate));
 
-  Serial.println("PRD_UI: sync before send");
+  // Serial.println("PRD_UI: sync before send");
   setButtonEnabled(ui.mouldButtonSend, hasSelection && safeForUpdate);
-  Serial.println("PRD_UI: sync after send");
+  // Serial.println("PRD_UI: sync after send");
 
-  Serial.println("PRD_UI: sync before delete");
+  // Serial.println("PRD_UI: sync before delete");
   setButtonEnabled(ui.mouldButtonDelete, hasSelection);
-  Serial.println("PRD_UI: sync after delete");
+  // Serial.println("PRD_UI: sync after delete");
 }
 
 void rebuildMouldList() {
   lv_mem_monitor_t mon_before;
   lv_mem_monitor(&mon_before);
-  ESP_LOGD(TAG,
-           "LVGL mem before rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
-           (unsigned)mon_before.free_size, (unsigned)mon_before.used_pct,
-           (unsigned)mon_before.frag_pct,
-           (unsigned)mon_before.free_biggest_size);
+  ESP_LOGD(
+      TAG,
+      "LVGL mem before rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
+      (unsigned)mon_before.free_size, (unsigned)mon_before.used_pct,
+      (unsigned)mon_before.frag_pct, (unsigned)mon_before.free_biggest_size);
 
-  Serial.printf("PRD_UI: rebuildMouldList begin count=%d selected=%d\n", ui.mouldProfileCount, ui.selectedMould);
+  Serial.printf("PRD_UI: rebuildMouldList begin count=%d selected=%d\n",
+                ui.mouldProfileCount, ui.selectedMould);
   if (!ui.mouldList) {
     Serial.println("PRD_UI: rebuildMouldList aborted (mouldList null)");
     return;
@@ -935,7 +942,8 @@ void rebuildMouldList() {
   int renderCount = ui.mouldProfileCount;
 #if SCREEN_DIAG_SKIP_LAST_PROFILE_ON_RENDER
   if (renderCount > 0) {
-    Serial.printf("PRD_UI: SCREEN_DIAG_SKIP_LAST_PROFILE_ON_RENDER=1 -> rendering %d/%d profiles\n",
+    Serial.printf("PRD_UI: SCREEN_DIAG_SKIP_LAST_PROFILE_ON_RENDER=1 -> "
+                  "rendering %d/%d profiles\n",
                   renderCount - 1, renderCount);
     renderCount -= 1;
   }
@@ -976,8 +984,7 @@ void rebuildMouldList() {
   ESP_LOGD(TAG,
            "LVGL mem after rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
            (unsigned)mon_after.free_size, (unsigned)mon_after.used_pct,
-           (unsigned)mon_after.frag_pct,
-           (unsigned)mon_after.free_biggest_size);
+           (unsigned)mon_after.frag_pct, (unsigned)mon_after.free_biggest_size);
   Serial.println("PRD_UI: rebuild end");
 }
 
@@ -1252,7 +1259,8 @@ void onMouldNew(lv_event_t *) {
 
   ui.mouldProfiles[ui.mouldProfileCount] = newProfile;
   ui.mouldProfileCount++;
-  Serial.printf("PRD_UI: onMouldNew after append count=%d\n", ui.mouldProfileCount);
+  Serial.printf("PRD_UI: onMouldNew after append count=%d\n",
+                ui.mouldProfileCount);
   delay(0);
   rebuildMouldList();
   Serial.println("PRD_UI: onMouldNew after rebuild");
@@ -1435,7 +1443,8 @@ void showCommonKeyboard(lv_obj_t *textarea) {
   lv_keyboard_set_mode(ui.commonKeyboard, LV_KEYBOARD_MODE_NUMBER);
   lv_obj_clear_flag(ui.commonKeyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(ui.commonKeyboard);
-  keepTextareaVisibleAboveKeyboard(ui.commonScroll, textarea, ui.commonKeyboard);
+  keepTextareaVisibleAboveKeyboard(ui.commonScroll, textarea,
+                                   ui.commonKeyboard);
   lv_async_call(async_scroll_to_view, textarea);
 }
 
@@ -1649,8 +1658,8 @@ void createMouldPanel() {
       createButton(ui.rightPanelMould, "Edit", 236, 648, 96, 52, onMouldEdit);
   ui.mouldButtonNew =
       createButton(ui.rightPanelMould, "New", 70, 712, 96, 52, onMouldNew);
-  ui.mouldButtonDelete = 
-      createButton(ui.rightPanelMould, "Delete", 184, 712, 96, 52, onMouldDelete);
+  ui.mouldButtonDelete = createButton(ui.rightPanelMould, "Delete", 184, 712,
+                                      96, 52, onMouldDelete);
 }
 
 void createMouldEditPanel() {
@@ -2002,7 +2011,8 @@ void init() {
 #if SCREEN_DIAG_ENABLE_PRD_MOULD_EDIT
   Serial.println("PRD_UI: init deferred createMouldEditPanel (lazy on Edit)");
 #else
-  Serial.println("PRD_UI: init SCREEN_DIAG_ENABLE_PRD_MOULD_EDIT=0 -> skip edit");
+  Serial.println(
+      "PRD_UI: init SCREEN_DIAG_ENABLE_PRD_MOULD_EDIT=0 -> skip edit");
 #endif
   Serial.println("PRD_UI: init createCommonPanel");
   createCommonPanel();
