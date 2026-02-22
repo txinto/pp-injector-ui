@@ -363,6 +363,7 @@ static const uint8_t *font5x7(char c)
     static const uint8_t DOT[7]   = {0,0,0,0,0,0x0C,0x0C};
     static const uint8_t COLON[7] = {0,0x0C,0x0C,0,0x0C,0x0C,0};
     static const uint8_t SLASH[7] = {0x01,0x02,0x04,0x08,0x10,0,0};
+    static const uint8_t PERCENT[7] = {0x19,0x19,0x02,0x04,0x08,0x13,0x13};
     static const uint8_t ZERO[7]  = {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E};
     static const uint8_t ONE[7]   = {0x04,0x0C,0x14,0x04,0x04,0x04,0x1F};
     static const uint8_t TWO[7]   = {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F};
@@ -408,7 +409,7 @@ static const uint8_t *font5x7(char c)
         case 'Q': return Q; case 'R': return R; case 'S': return S; case 'T': return T;
         case 'U': return U; case 'V': return V; case 'W': return W; case 'X': return X;
         case 'Y': return Y; case 'Z': return Z;
-        case '-': return DASH; case '_': return UNDERSCORE; case '.': return DOT; case ':': return COLON; case '/': return SLASH;
+        case '-': return DASH; case '_': return UNDERSCORE; case '.': return DOT; case ':': return COLON; case '/': return SLASH; case '%': return PERCENT;
         case '0': return ZERO; case '1': return ONE; case '2': return TWO; case '3': return THREE; case '4': return FOUR;
         case '5': return FIVE; case '6': return SIX; case '7': return SEVEN; case '8': return EIGHT; case '9': return NINE;
         case ' ': return SPACE;

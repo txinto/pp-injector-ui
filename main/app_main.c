@@ -1568,7 +1568,7 @@ void app_main(void)
                                 OTA_get_running_version(ota_running_ver, sizeof(ota_running_ver));
                                 OTA_get_target_version(ota_target_ver, sizeof(ota_target_ver));
                                 snprintf(ota_status, sizeof(ota_status),
-                                         "OTA IN PROGRESS\nCUR %s\nNEW %s\nPROG %d",
+                                         "OTA IN PROGRESS\nCUR %s\nNEW %s\nPROG %d%%",
                                          ota_running_ver, ota_target_ver, pct);
                                 TouchScreen_boot_display_draw_center_text(ota_status, 0xFFFF, 0x0000);
                                 last_pct = pct;
