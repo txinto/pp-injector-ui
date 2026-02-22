@@ -274,3 +274,36 @@ esp_err_t TouchScreen_display_init(void)
 
     return ESP_OK;
 }
+
+esp_err_t TouchScreen_display_boot_init(void)
+{
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t TouchScreen_display_boot_clear(uint16_t color)
+{
+    (void)color;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t TouchScreen_display_boot_fill_rect(int x, int y, int w, int h, uint16_t color)
+{
+    (void)x; (void)y; (void)w; (void)h; (void)color;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t TouchScreen_display_boot_draw_center_text(const char *text, uint16_t fg, uint16_t bg)
+{
+    (void)text; (void)fg; (void)bg;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+int TouchScreen_display_boot_width(void)
+{
+    return 0;
+}
+
+int TouchScreen_display_boot_height(void)
+{
+    return 0;
+}

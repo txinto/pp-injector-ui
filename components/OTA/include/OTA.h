@@ -6,6 +6,7 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <esp_err.h>
 
 // ------------------ BEGIN Constants ------------------
 #define OTA_URL_SIZE 256
@@ -25,6 +26,8 @@ typedef enum {
 // ------------------ BEGIN DRE ------------------
 typedef struct {
     bool enabled;
+    bool running;
+    bool finished;
     OTA_return_code_t last_return_code;
 #include "OTA_netvar_types_fragment.h_"
 
@@ -44,6 +47,22 @@ OTA_return_code_t OTA_start(void);
  *  Thread-safe clone of current DRE state.
  */
 OTA_return_code_t OTA_get_dre_clone(OTA_dre_t *dst);
+
+/**
+ * True while OTA task is in progress.
+ */
+bool OTA_is_running(void);
+
+/**
+ * True when OTA task has already ended (success or failure) since last OTA_start().
+ */
+bool OTA_has_finished(void);
+
+int OTA_get_image_len_read(void);
+int OTA_get_image_total_len(void);
+esp_err_t OTA_get_last_error(void);
+bool OTA_get_running_version(char *dst, size_t dst_len);
+bool OTA_get_target_version(char *dst, size_t dst_len);
 
 /**
  *  Change the periodic interval at runtime (ms).

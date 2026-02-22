@@ -64,6 +64,12 @@ bool example_lvgl_lock(int timeout_ms);
 void example_lvgl_unlock(void);
 
 esp_err_t waveshare_esp32_s3_rgb_lcd_init();
+esp_err_t waveshare_esp32_s3_rgb_lcd_init_nolvgl();
+esp_err_t waveshare_esp32_s3_rgb_lcd_clear(uint16_t color);
+esp_err_t waveshare_esp32_s3_rgb_lcd_fill_rect(int x, int y, int w, int h, uint16_t color);
+esp_err_t waveshare_esp32_s3_rgb_lcd_draw_center_text(const char *text, uint16_t fg, uint16_t bg);
+int waveshare_esp32_s3_rgb_lcd_width(void);
+int waveshare_esp32_s3_rgb_lcd_height(void);
 
 esp_err_t wavesahre_rgb_lcd_bl_on();
 esp_err_t wavesahre_rgb_lcd_bl_off();

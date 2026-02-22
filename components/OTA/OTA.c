@@ -62,6 +62,8 @@ static const char *TAG = "OTA";
 // BEGIN --- Internal variables (DRE)
 OTA_dre_t OTA_dre = {
     .enabled = true,
+    .running = false,
+    .finished = false,
     .last_return_code = OTA_ret_ok
 };
 
@@ -170,6 +172,11 @@ static TaskHandle_t s_task = NULL;
 static volatile bool s_run = false;
 
 static SemaphoreHandle_t s_mutex = NULL;
+static volatile int s_img_len_read = 0;
+static volatile int s_img_total_len = 0;
+static volatile esp_err_t s_last_ota_err = ESP_OK;
+static char s_running_version[32] = "unknown";
+static char s_target_version[32] = "unknown";
 
 static inline void _lock(void)
 {
@@ -205,6 +212,50 @@ static inline BaseType_t _get_core_affinity(void)
     return tskNO_AFFINITY;
 #endif
 }
+
+static void ota_set_runtime_state(bool running, bool finished, OTA_return_code_t rc)
+{
+    _lock();
+    OTA_dre.running = running;
+    OTA_dre.finished = finished;
+    OTA_dre.last_return_code = rc;
+    if (!running)
+    {
+        s_task = NULL;
+    }
+    _unlock();
+}
+
+static void ota_set_progress(int read_len, int total_len)
+{
+    _lock();
+    s_img_len_read = read_len;
+    s_img_total_len = total_len;
+    _unlock();
+}
+
+static void ota_set_last_error(esp_err_t err)
+{
+    _lock();
+    s_last_ota_err = err;
+    _unlock();
+}
+
+static void ota_set_running_version(const char *version)
+{
+    _lock();
+    snprintf(s_running_version, sizeof(s_running_version), "%s",
+             (version && version[0] != '\0') ? version : "unknown");
+    _unlock();
+}
+
+static void ota_set_target_version(const char *version)
+{
+    _lock();
+    snprintf(s_target_version, sizeof(s_target_version), "%s",
+             (version && version[0] != '\0') ? version : "unknown");
+    _unlock();
+}
 #ifdef CONFIG_OTA_FWSERVER_URL
 
 #include <esp_mac.h>
@@ -215,6 +266,21 @@ static void OTA_task(void *arg)
 {
     (void)arg;
     ESP_LOGI(TAG, "Starting OTA process");
+    ota_set_runtime_state(true, false, OTA_ret_ok);
+    ota_set_progress(0, 0);
+    ota_set_last_error(ESP_OK);
+    ota_set_target_version("unknown");
+
+    const esp_partition_t *running_part = esp_ota_get_running_partition();
+    esp_app_desc_t running_desc = {0};
+    if (running_part && esp_ota_get_partition_description(running_part, &running_desc) == ESP_OK)
+    {
+        ota_set_running_version(running_desc.version);
+    }
+    else
+    {
+        ota_set_running_version("unknown");
+    }
 
     esp_err_t ota_finish_err = ESP_OK;
 #ifdef CONFIG_OTA_FWSERVER_URL
@@ -303,6 +369,8 @@ static void OTA_task(void *arg)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "ESP HTTPS OTA Begin failed");
+        ota_set_last_error(err);
+        ota_set_runtime_state(false, true, OTA_ret_error);
         vTaskDelete(NULL);
     }
 
@@ -311,12 +379,15 @@ static void OTA_task(void *arg)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "esp_https_ota_read_img_desc failed");
+        ota_set_last_error(err);
         goto ota_end;
     }
+    ota_set_target_version(app_desc.version);
     err = validate_image_header(&app_desc);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "image header verification failed");
+        ota_set_last_error(err);
         goto ota_end;
     }
 
@@ -330,13 +401,16 @@ static void OTA_task(void *arg)
         // esp_https_ota_perform returns after every read operation which gives user the ability to
         // monitor the status of OTA upgrade by calling esp_https_ota_get_image_len_read, which gives length of image
         // data read so far.
-        ESP_LOGI(TAG, "Image bytes read: %d / %lu", esp_https_ota_get_image_len_read(https_ota_handle), running_partition->size);
+        int read_len = esp_https_ota_get_image_len_read(https_ota_handle);
+        ota_set_progress(read_len, (int)running_partition->size);
+        ESP_LOGI(TAG, "Image bytes read: %d / %lu", read_len, running_partition->size);
     }
 
     if (esp_https_ota_is_complete_data_received(https_ota_handle) != true)
     {
         // the OTA image was not completely received and user can customise the response to this situation.
         ESP_LOGE(TAG, "Complete data was not received.");
+        ota_set_last_error(ESP_ERR_INVALID_SIZE);
     }
     else
     {
@@ -344,6 +418,7 @@ static void OTA_task(void *arg)
         if ((err == ESP_OK) && (ota_finish_err == ESP_OK))
         {
             ESP_LOGI(TAG, "ESP_HTTPS_OTA upgrade successful. Rebooting ...");
+            ota_set_runtime_state(false, true, OTA_ret_ok);
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             esp_restart();
         }
@@ -354,6 +429,8 @@ static void OTA_task(void *arg)
                 ESP_LOGE(TAG, "Image validation failed, image is corrupted");
             }
             ESP_LOGE(TAG, "ESP_HTTPS_OTA upgrade failed 0x%x", ota_finish_err);
+            ota_set_last_error(ota_finish_err);
+            ota_set_runtime_state(false, true, OTA_ret_error);
             vTaskDelete(NULL);
         }
     }
@@ -361,6 +438,8 @@ static void OTA_task(void *arg)
 ota_end:
     esp_https_ota_abort(https_ota_handle);
     ESP_LOGE(TAG, "ESP_HTTPS_OTA upgrade failed");
+    ota_set_last_error(err);
+    ota_set_runtime_state(false, true, OTA_ret_error);
     vTaskDelete(NULL);
 }
 
@@ -383,6 +462,7 @@ OTA_return_code_t OTA_start(void)
             return OTA_ret_ok;
         }
         s_run = true;
+        ota_set_runtime_state(false, false, OTA_ret_ok);
 
         ESP_ERROR_CHECK(esp_event_handler_register(ESP_HTTPS_OTA_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
         /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
@@ -448,6 +528,7 @@ OTA_return_code_t OTA_start(void)
         {
             s_task = NULL;
             s_run = false;
+            ota_set_runtime_state(false, true, OTA_ret_error);
             ESP_LOGE(TAG, "xTaskCreatePinnedToCore failed");
             return OTA_ret_error;
         }
@@ -468,6 +549,75 @@ OTA_return_code_t OTA_get_dre_clone(OTA_dre_t *dst)
     memcpy(dst, &OTA_dre, sizeof(OTA_dre));
     _unlock();
     return OTA_ret_ok;
+}
+
+bool OTA_is_running(void)
+{
+    bool running;
+    _lock();
+    running = OTA_dre.running;
+    _unlock();
+    return running;
+}
+
+bool OTA_has_finished(void)
+{
+    bool finished;
+    _lock();
+    finished = OTA_dre.finished;
+    _unlock();
+    return finished;
+}
+
+int OTA_get_image_len_read(void)
+{
+    int v;
+    _lock();
+    v = s_img_len_read;
+    _unlock();
+    return v;
+}
+
+int OTA_get_image_total_len(void)
+{
+    int v;
+    _lock();
+    v = s_img_total_len;
+    _unlock();
+    return v;
+}
+
+esp_err_t OTA_get_last_error(void)
+{
+    esp_err_t v;
+    _lock();
+    v = s_last_ota_err;
+    _unlock();
+    return v;
+}
+
+bool OTA_get_running_version(char *dst, size_t dst_len)
+{
+    if (!dst || dst_len == 0)
+    {
+        return false;
+    }
+    _lock();
+    snprintf(dst, dst_len, "%s", s_running_version);
+    _unlock();
+    return true;
+}
+
+bool OTA_get_target_version(char *dst, size_t dst_len)
+{
+    if (!dst || dst_len == 0)
+    {
+        return false;
+    }
+    _lock();
+    snprintf(dst, dst_len, "%s", s_target_version);
+    _unlock();
+    return true;
 }
 
 // END   ------------------ Public API (MULTITASKING)------------------
@@ -494,7 +644,13 @@ OTA_return_code_t OTA_setup(void)
         ESP_LOGE(TAG, "mutex creation failed");
         return OTA_ret_error;
     }
+    _lock();
+    OTA_dre.running = false;
+    OTA_dre.finished = false;
     OTA_dre.last_return_code = OTA_ret_ok;
+    snprintf(s_running_version, sizeof(s_running_version), "%s", "unknown");
+    snprintf(s_target_version, sizeof(s_target_version), "%s", "unknown");
+    _unlock();
     return OTA_ret_ok;
 }
 

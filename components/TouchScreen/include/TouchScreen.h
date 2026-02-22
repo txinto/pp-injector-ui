@@ -6,6 +6,7 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <esp_err.h>
 
 #include <PrjCfg.h>
 
@@ -101,6 +102,17 @@ TouchScreen_return_code_t TouchScreen_disable(void);
 bool TouchScreen_lvgl_ready(void);
 bool TouchScreen_lvgl_lock(int timeout_ms);
 void TouchScreen_lvgl_unlock(void);
+
+/**
+ * Lightweight boot display helpers (no LVGL).
+ */
+bool TouchScreen_boot_display_ready(void);
+esp_err_t TouchScreen_boot_display_init(void);
+esp_err_t TouchScreen_boot_display_clear(uint16_t color);
+esp_err_t TouchScreen_boot_display_fill_rect(int x, int y, int w, int h, uint16_t color);
+esp_err_t TouchScreen_boot_display_draw_center_text(const char *text, uint16_t fg, uint16_t bg);
+int TouchScreen_boot_display_width(void);
+int TouchScreen_boot_display_height(void);
 
 // ------------------ END   Public API (COMMON)--------------------
 
