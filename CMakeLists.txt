@@ -279,10 +279,10 @@ endif()
 
 # --- IDF project.cmake + nombre de proyecto --------------------------------
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(poris_base)
+project(pp-injector-ui)
 
 # --- Mensajería útil post-config -------------------------------------------
-message(STATUS "================ poris_base build context ================")
+message(STATUS "================ pp-injector-ui build context ================")
 message(STATUS "  VARIANT            : ${VARIANT}")
 message(STATUS "  IDF_TARGET         : ${IDF_TARGET}")
 message(STATUS "  SDKCONFIG_DEFAULTS : ${SDKCONFIG_DEFAULTS}")
