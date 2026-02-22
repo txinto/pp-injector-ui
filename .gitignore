@@ -19,3 +19,6 @@ output.txt
 .DS_Store
 
 /releases
+
+# Local secrets/config
+scripts/config_secrets.py
