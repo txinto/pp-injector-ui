@@ -19,12 +19,14 @@
 #include "esp_system.h"
 #include "esp_err.h"
 #include "esp_event.h"
+#include "esp_attr.h"
+#include "esp_timer.h"
+#include "esp_mac.h"
 #include <esp_log.h>
-#include <esp_attr.h>
+#include "qrcode.h"
 
 // Include project configuration
 #include <PrjCfg.h>
-
 
 // Include components
 #ifdef CONFIG_PORIS_ENABLE_WIFI
@@ -145,10 +147,123 @@ typedef enum
 } app_main_return_code;
 
 static char TAG[] = "main";
-#define FORCED_PROVISIONING_MAGIC 0x50525631u
-RTC_NOINIT_ATTR static uint32_t s_forced_provisioning_magic;
 
 static bool s_network_started = false;
+
+typedef enum
+{
+    BOOT_STATE_NORMAL = 0
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+    ,
+    BOOT_STATE_PROV_START = 1,
+    BOOT_STATE_PROV_END = 2
+#endif
+#ifdef CONFIG_PORIS_ENABLE_OTA
+    ,
+    BOOT_STATE_OTA = 3
+#endif
+} boot_state_t;
+
+/* Keep across esp_restart(). On non-software reset we force NORMAL. */
+__NOINIT_ATTR static uint32_t boot_state_noinit;
+static uint32_t boot_state = BOOT_STATE_NORMAL;
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+static bool provisioning_enabled = false;
+#endif
+static bool ui_enabled = true;
+
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+static void main_get_provisioning_service_name(char *dst, size_t dst_len)
+{
+    if (!dst || dst_len == 0)
+    {
+        return;
+    }
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK)
+    {
+        snprintf(dst, dst_len, "%s%02X%02X%02X",
+                 CONFIG_PROVISIONING_SERVICE_NAME_PREFIX, mac[3], mac[4], mac[5]);
+    }
+    else
+    {
+        snprintf(dst, dst_len, "%s??????", CONFIG_PROVISIONING_SERVICE_NAME_PREFIX);
+    }
+}
+#endif
+
+static bool boot_state_is_valid(uint32_t st)
+{
+    if (st == BOOT_STATE_NORMAL)
+    {
+        return true;
+    }
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+    if (st == BOOT_STATE_PROV_START || st == BOOT_STATE_PROV_END)
+    {
+        return true;
+    }
+#endif
+#ifdef CONFIG_PORIS_ENABLE_OTA
+    if (st == BOOT_STATE_OTA)
+    {
+        return true;
+    }
+#endif
+    return false;
+}
+
+static const char *boot_state_to_str(uint32_t st)
+{
+    switch (st)
+    {
+    case BOOT_STATE_NORMAL:
+        return "NORMAL";
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+    case BOOT_STATE_PROV_START:
+        return "PROV_START";
+    case BOOT_STATE_PROV_END:
+        return "PROV_END";
+#endif
+#ifdef CONFIG_PORIS_ENABLE_OTA
+    case BOOT_STATE_OTA:
+        return "OTA";
+#endif
+    default:
+        return "INVALID";
+    }
+}
+
+static void boot_fsm_init_on_reset_reason(void)
+{
+    esp_reset_reason_t rr = esp_reset_reason();
+    uint32_t st = BOOT_STATE_NORMAL;
+
+    if (rr != ESP_RST_SW)
+    {
+        st = BOOT_STATE_NORMAL;
+        ESP_LOGI(TAG, "boot_fsm: reset_reason=%d -> force boot_state=%s",
+                 (int)rr, boot_state_to_str(st));
+    }
+    else if (!boot_state_is_valid(boot_state_noinit))
+    {
+        st = BOOT_STATE_NORMAL;
+        ESP_LOGW(TAG, "boot_fsm: invalid boot_state after SW reset, forcing %s",
+                 boot_state_to_str(st));
+    }
+    else
+    {
+        st = boot_state_noinit;
+        ESP_LOGI(TAG, "boot_fsm: SW reset, keeping boot_state=%s",
+                 boot_state_to_str(st));
+    }
+
+    /* FSM uses normal RAM copy. */
+    boot_state = st;
+
+    /* One-shot NOINIT ticket: always clear after consuming. */
+    boot_state_noinit = BOOT_STATE_NORMAL;
+}
 
 #define BLE_DEVICE_NAME_PREFIX "POR-"
 static char ble_device_name[20];
@@ -171,18 +286,18 @@ esp_err_t process_received_command(const uint8_t *inbuf, ssize_t inlen)
     bool ret = false;
     if ((inlen > 1) && (inbuf[0] == 'c'))
     {
-        ESP_LOGI(TAG,"This is a configuration command");
-        ret = main_parse_callback((char *)&(inbuf[1]), inlen-1, response_buf);
+        ESP_LOGI(TAG, "This is a configuration command");
+        ret = main_parse_callback((char *)&(inbuf[1]), inlen - 1, response_buf);
     }
     else
     {
         ESP_LOGI(TAG, "This is a request command");
         ret = main_req_parse_callback((char *)inbuf, inlen, response_buf);
     }
-    ESP_LOGI(TAG,"END Process command %.*s", inlen, (char *)inbuf);
+    ESP_LOGI(TAG, "END Process command %.*s", inlen, (char *)inbuf);
     if (ret)
     {
-        ESP_LOGI(TAG, "Process response %d %s",strlen(response_buf), response_buf);
+        ESP_LOGI(TAG, "Process response %d %s", strlen(response_buf), response_buf);
         bleprph_gatt_svr_callback((uint8_t *)response_buf, strlen(response_buf));
     }
     else
@@ -192,7 +307,6 @@ esp_err_t process_received_command(const uint8_t *inbuf, ssize_t inlen)
     return ESP_OK;
 }
 #endif
-
 
 app_main_return_code init_components(void)
 {
@@ -205,10 +319,15 @@ app_main_return_code init_components(void)
     error_accumulator |= error_occurred;
 #endif
 #ifdef CONFIG_PORIS_ENABLE_PROVISIONING
-    if (s_network_started)
+    if (provisioning_enabled || s_network_started)
     {
         error_occurred = (Provisioning_setup() != Provisioning_ret_ok);
         error_accumulator |= error_occurred;
+    }
+    else
+    {
+        ESP_LOGI(TAG, "boot_fsm: provisioning setup skipped (boot_state=%s)",
+                 boot_state_to_str(boot_state));
     }
 #endif
 #ifdef CONFIG_PORIS_ENABLE_WIFI
@@ -303,7 +422,7 @@ app_main_return_code start_components(void)
     error_accumulator |= error_occurred;
 #endif
 #ifdef CONFIG_PORIS_ENABLE_PROVISIONING
-    if (s_network_started)
+    if (provisioning_enabled || s_network_started)
     {
         error_occurred = (Provisioning_enable() != Provisioning_ret_ok);
 #ifdef CONFIG_PROVISIONING_USE_THREAD
@@ -396,7 +515,7 @@ app_main_return_code start_components(void)
         ESP_LOGI(TAG, "************* Peripheral Role *****************************");
         ESP_LOGW(TAG, "Setting process_received_command");
         ble_peripheral_set_process_command_cb(process_received_command);
-        sprintf(ble_device_name,"%s%s", BLE_DEVICE_NAME_PREFIX, PrjCfg_dre.unique_id);
+        sprintf(ble_device_name, "%s%s", BLE_DEVICE_NAME_PREFIX, PrjCfg_dre.unique_id);
         ble_peripheral_app(ble_device_name);
     }
 #ifdef CONFIG_BLEPERIPHERAL_USE_THREAD
@@ -476,11 +595,183 @@ static uint8_t ppinjectorui_cycle_counter = 0;
 
 #ifdef CONFIG_PORIS_ENABLE_OTA
 static bool ota_checked = false;
+static bool ota_enabled = false;
 #endif
 #ifdef CONFIG_PORIS_ENABLE_MQTTCOMM
 static bool mqttcomm_started = false;
 #endif
 static bool ui_started = false;
+
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) && defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN) && !defined(CONFIG_TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW)
+static const char *s_prov_qr_payload_ptr = NULL;
+static bool s_prov_qr_payload_ready = false;
+static bool s_prov_qr_painted = false;
+static bool s_prov_qr_render_task_running = false;
+static int64_t s_prov_qr_payload_ts_us = 0;
+
+static void main_try_render_provisioning_qr(void);
+
+static void main_provisioning_qr_render_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "boot_qr: deferred render task started");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    main_try_render_provisioning_qr();
+    s_prov_qr_render_task_running = false;
+    ESP_LOGI(TAG, "boot_qr: deferred render task finished");
+    vTaskDelete(NULL);
+}
+
+static void main_provisioning_qr_payload_cb(const char *payload)
+{
+    if (!payload)
+    {
+        return;
+    }
+    s_prov_qr_payload_ptr = payload;
+    s_prov_qr_payload_ready = true;
+    s_prov_qr_painted = false;
+    s_prov_qr_payload_ts_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "boot_qr: payload captured from provisioning callback");
+    if (!s_prov_qr_render_task_running)
+    {
+        s_prov_qr_render_task_running = true;
+        BaseType_t ok = xTaskCreate(main_provisioning_qr_render_task, "boot_qr", 4096, NULL, 4, NULL);
+        if (ok != pdPASS)
+        {
+            s_prov_qr_render_task_running = false;
+            ESP_LOGW(TAG, "boot_qr: could not create deferred render task");
+        }
+    }
+}
+
+static void main_boot_qr_display_cb(esp_qrcode_handle_t qrcode)
+{
+    int w = TouchScreen_boot_display_width();
+    int h = TouchScreen_boot_display_height();
+    if (w <= 0 || h <= 0)
+    {
+        esp_qrcode_print_console(qrcode);
+        return;
+    }
+    TouchScreen_boot_display_clear(0xFFFF);
+    int size = esp_qrcode_get_size(qrcode);
+    int max_side = (w < h ? w : h) - 80;
+    if (max_side < size)
+    {
+        max_side = size;
+    }
+    int scale = max_side / size;
+    if (scale < 1)
+    {
+        scale = 1;
+    }
+    int qr_w = size * scale;
+    int x0 = (w - qr_w) / 2;
+    int y0 = (h - qr_w) / 2;
+    for (int y = 0; y < size; y++)
+    {
+        for (int x = 0; x < size; x++)
+        {
+            if (esp_qrcode_get_module(qrcode, x, y))
+            {
+                TouchScreen_boot_display_fill_rect(x0 + x * scale, y0 + y * scale, scale, scale, 0x0000);
+            }
+        }
+    }
+}
+
+static void main_try_render_provisioning_qr(void)
+{
+    if (!s_prov_qr_payload_ready || s_prov_qr_painted)
+    {
+        return;
+    }
+    if ((esp_timer_get_time() - s_prov_qr_payload_ts_us) < 1000000)
+    {
+        return;
+    }
+    if (!TouchScreen_boot_display_ready())
+    {
+        esp_err_t d_err = TouchScreen_boot_display_init();
+        if (d_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "boot_qr: display init failed: %s", esp_err_to_name(d_err));
+            return;
+        }
+    }
+    if (!TouchScreen_boot_display_ready())
+    {
+        return;
+    }
+
+    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+    cfg.display_func = main_boot_qr_display_cb;
+    ESP_LOGI(TAG, "boot_qr: painting QR on boot display now");
+    if (!s_prov_qr_payload_ptr || s_prov_qr_payload_ptr[0] == '\0')
+    {
+        ESP_LOGW(TAG, "boot_qr: payload pointer invalid");
+        return;
+    }
+    ESP_LOGI(TAG, "boot_qr: calling esp_qrcode_generate()");
+    esp_qrcode_generate(&cfg, s_prov_qr_payload_ptr);
+    s_prov_qr_painted = true;
+    ESP_LOGI(TAG, "boot_qr: QR rendered on boot display");
+}
+#endif
+
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) && defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+static char s_prov_status_pending[192];
+static volatile bool s_prov_status_dirty = false;
+static int s_prov_status_level = 0;
+
+static int main_prov_status_level(const char *status)
+{
+    if (!status)
+    {
+        return 0;
+    }
+    if (strstr(status, "PROVISIONED OK"))
+    {
+        return 5;
+    }
+    if (strstr(status, "WIFI CONNECT ERROR") || strstr(status, "WIFI DISCONNECTED"))
+    {
+        return 4;
+    }
+    if (strstr(status, "CREDENTIALS RECEIVED") || strstr(status, "CONNECTING TO WIFI"))
+    {
+        return 3;
+    }
+    if (strstr(status, "PROVISIONING STARTED"))
+    {
+        return 2;
+    }
+    if (strstr(status, "PROVISIONING IN PROGRESS"))
+    {
+        return 1;
+    }
+    return 2;
+}
+
+static void main_provisioning_status_cb(const char *status)
+{
+    if (!status || ui_enabled)
+    {
+        return;
+    }
+    int new_level = main_prov_status_level(status);
+    if (new_level < s_prov_status_level)
+    {
+        ESP_LOGI(TAG, "boot status ignored (downgrade): %s", status);
+        return;
+    }
+    s_prov_status_level = new_level;
+    snprintf(s_prov_status_pending, sizeof(s_prov_status_pending), "%s", status);
+    s_prov_status_dirty = true;
+    ESP_LOGI(TAG, "boot status queued: %s", s_prov_status_pending);
+}
+#endif
 
 app_main_return_code init_ui_components(void)
 {
@@ -747,7 +1038,6 @@ app_main_return_code run_components(void)
     return ret;
 }
 
-
 bool main_parse_callback(const char *data, int len, char *response)
 {
     ESP_LOGI(TAG, "Parsing the CFG payload %d %.*s", len, len, data);
@@ -876,7 +1166,6 @@ void main_compose_callback(char *data, int *len)
     cJSON_Delete(root);
 }
 
-
 void i_compose_callback(char *data, int *len)
 {
     sprintf((char *)data, "this is a payload (%lu)", msg_counter++);
@@ -907,7 +1196,6 @@ void i_compose_callback(char *data, int *len)
     cJSON_Delete(root);
 }
 
-
 bool main_req_parse_callback(const char *data, int len, char *response)
 {
     bool ret = false;
@@ -917,14 +1205,14 @@ bool main_req_parse_callback(const char *data, int len, char *response)
         if (data[0] == 'r')
         {
             ret = true;
-            ESP_LOGW(TAG,"Restaring!!!");
+            ESP_LOGW(TAG, "Restaring!!!");
             esp_restart();
         }
 #ifdef CONFIG_PORIS_ENABLE_OTA
         if (data[0] == 'u')
         {
             ret = true;
-            ESP_LOGW(TAG,"Going OTA!!!");
+            ESP_LOGW(TAG, "Going OTA!!!");
             OTA_enable();
             OTA_start();
         }
@@ -942,7 +1230,7 @@ bool check_ip_valid(void)
 {
 #ifdef CONFIG_PORIS_ENABLE_PROVISIONING
     return Provisioning_dre.ip_valid;
-#endif    
+#endif
 #ifdef CONFIG_PORIS_ENABLE_WIFI
     return Wifi_dre.ip_valid;
 #endif
@@ -951,6 +1239,8 @@ bool check_ip_valid(void)
 
 void app_main(void)
 {
+    boot_fsm_init_on_reset_reason();
+
     printf("Hello world!\n");
 
     /* Print chip information */
@@ -997,30 +1287,150 @@ void app_main(void)
     /* Initialize the event loop */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    bool forced_provisioning_mode = (s_forced_provisioning_magic == FORCED_PROVISIONING_MAGIC);
-    s_forced_provisioning_magic = 0;
-
-#ifdef CONFIG_PORIS_ENABLE_OTA
-    ota_checked = true; // Disable implicit boot OTA.
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) && defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN) && !defined(CONFIG_TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW)
+    Provisioning_set_qr_payload_callback(main_provisioning_qr_payload_cb);
+#endif
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) && defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+    Provisioning_set_status_callback(main_provisioning_status_cb);
 #endif
 
 #if defined(CONFIG_PORIS_ENABLE_PPINJECTORUI)
-    // Keep UI offline-first: credentials state will be updated when networking is
-    // intentionally started by user action.
-    PPInjectorUI_set_wifi_credentials_available(false);
+    bool has_wifi_credentials = false;
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+    has_wifi_credentials = Provisioning_is_provisioned();
+#elif defined(CONFIG_PORIS_ENABLE_WIFI)
+    has_wifi_credentials = true;
+#endif
+    PPInjectorUI_set_wifi_credentials_available(has_wifi_credentials);
+    ESP_LOGI(TAG, "boot_fsm: wifi credentials available=%d", has_wifi_credentials);
 #endif
 
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) || defined(CONFIG_PORIS_ENABLE_OTA)
 #ifdef CONFIG_PORIS_ENABLE_PROVISIONING
-    if (forced_provisioning_mode)
+    provisioning_enabled = false;
+#endif
+    ui_enabled = true;
+    s_network_started = false;
+#ifdef CONFIG_PORIS_ENABLE_OTA
+    ota_enabled = false;
+#endif
+    switch (boot_state)
     {
-        ESP_LOGW(TAG, "Forced provisioning mode: starting before UI/components");
-        if (Provisioning_start_on_demand(true, true, true) == Provisioning_ret_ok)
+    case BOOT_STATE_NORMAL:
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+        provisioning_enabled = false;
+#endif
+        ui_enabled = true;
+        s_network_started = false;
+        break;
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+    case BOOT_STATE_PROV_START:
+        ESP_LOGW(TAG, "boot_fsm: entering PROV_START");
+        /* Keep one more boot in provisioning flow so mobile app can close session. */
+        boot_state_noinit = BOOT_STATE_PROV_END;
+#ifdef CONFIG_PORIS_ENABLE_OTA
+        ota_enabled = false;
+#endif
+        provisioning_enabled = true;
+        ui_enabled = false;
+        break;
+    case BOOT_STATE_PROV_END:
+        ESP_LOGW(TAG, "boot_fsm: entering PROV_END");
+#ifdef CONFIG_PORIS_ENABLE_OTA
+        ota_enabled = true;
+#endif
+        provisioning_enabled = true;
+        ui_enabled = false;
+        break;
+#endif
+#ifdef CONFIG_PORIS_ENABLE_OTA
+    case BOOT_STATE_OTA:
+        ESP_LOGW(TAG, "boot_fsm: entering OTA");
+        ota_enabled = true;
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+        provisioning_enabled = true;
+#endif
+        ui_enabled = false;
+        s_network_started = true;
+        break;
+#endif
+    default:
+        ESP_LOGW(TAG, "boot_fsm: unexpected state %u", (unsigned)boot_state);
+#ifdef CONFIG_PORIS_ENABLE_OTA
+        ota_enabled = false;
+#endif
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+        provisioning_enabled = false;
+#endif
+        ui_enabled = true;
+        s_network_started = false;
+        break;
+    }
+#ifdef CONFIG_PORIS_ENABLE_OTA
+    ESP_LOGI(TAG, "boot_fsm: ota_enabled=%d", ota_enabled);
+#endif
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+    ESP_LOGI(TAG, "boot_fsm: provisioning_enabled=%d ui_enabled=%d (boot_state=%s)",
+             provisioning_enabled, ui_enabled, boot_state_to_str(boot_state));
+#else
+    ESP_LOGI(TAG, "boot_fsm: ui_enabled=%d network_started=%d (boot_state=%s)",
+             ui_enabled, s_network_started, boot_state_to_str(boot_state));
+#endif
+#endif
+
+#if defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+    if (!ui_enabled)
+    {
+        const char *boot_msg = "BOOT IN PROGRESS";
+        char boot_msg_buf[192];
+        bool allow_boot_display = true;
+#ifdef CONFIG_PORIS_ENABLE_OTA
+        if (boot_state == BOOT_STATE_OTA)
         {
-            ESP_LOGI(TAG, "Forced provisioning completed, rebooting");
-            esp_restart();
+            boot_msg = "OTA IN PROGRESS";
         }
-        ESP_LOGE(TAG, "Forced provisioning failed, rebooting");
-        esp_restart();
+#endif
+#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
+        if (boot_state == BOOT_STATE_PROV_START || boot_state == BOOT_STATE_PROV_END)
+        {
+            if (boot_state == BOOT_STATE_PROV_END)
+            {            
+                boot_msg = "PROVISIONING SUCCESSFUL";
+            } 
+            else 
+            {
+                char prov_name[24];
+                main_get_provisioning_service_name(prov_name, sizeof(prov_name));
+                snprintf(boot_msg_buf, sizeof(boot_msg_buf),
+                         "PROVISIONING IN PROGRESS\nBLE %s\nUSE MOBILE APP", prov_name);
+                boot_msg = boot_msg_buf;
+            }
+#if defined(CONFIG_PROV_TRANSPORT_BLE)
+#if !defined(CONFIG_TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW)
+            /* BLE provisioning is sensitive to internal RAM pressure. Skip RGB boot display here. */
+            allow_boot_display = false;
+#else
+            ESP_LOGW(TAG, "boot display enabled during BLE provisioning (Elecrow best-effort)");
+#endif
+#endif
+        }
+#endif
+        if (allow_boot_display)
+        {
+            esp_err_t d_err = TouchScreen_boot_display_init();
+            if (d_err == ESP_OK)
+            {
+                TouchScreen_boot_display_draw_center_text(boot_msg, 0xFFFF, 0x0000);
+            }
+            else
+            {
+                ESP_LOGW(TAG, "boot display init failed: %s", esp_err_to_name(d_err));
+            }
+        }
+        else
+        {
+            ESP_LOGW(TAG, "boot display skipped during BLE provisioning state to preserve RAM");
+        }
     }
 #endif
 
@@ -1068,62 +1478,126 @@ void app_main(void)
     }
     while (true)
     {
-        //ESP_LOGI(TAG, "app_main spinning");
+        // ESP_LOGI(TAG, "app_main spinning");
         vTaskDelay(MAIN_CYCLE_PERIOD_MS / portTICK_PERIOD_MS);
         if (shall_execute)
         {
 #ifdef CONFIG_PORIS_ENABLE_OTA
-            #ifdef CONFIG_PORIS_ENABLE_PPINJECTORUI
+#ifdef CONFIG_PORIS_ENABLE_PPINJECTORUI
             PPInjectorUI_system_action_t pending_action = PPInjectorUI_take_system_action();
             if (pending_action == PPInjectorUI_system_action_ota)
             {
-                ESP_LOGW(TAG, "UI requested OTA on-demand");
-#ifdef CONFIG_PORIS_ENABLE_PROVISIONING
-                if (Provisioning_start_on_demand(false, true, false) == Provisioning_ret_ok)
-                {
-                    s_network_started = true;
-                    OTA_enable();
-                    OTA_start();
-                    OTA_disable();
-                }
-                else
-                {
-                    PPInjectorUI_set_wifi_credentials_available(false);
-                    ESP_LOGW(TAG, "OTA request ignored: no stored Wi-Fi credentials");
-                }
-#else
-                ESP_LOGW(TAG, "OTA request ignored: provisioning component disabled");
-#endif
+                ESP_LOGW(TAG, "UI requested OTA");
+                boot_state_noinit = BOOT_STATE_OTA;
+                ESP_LOGW(TAG, "Rebooting into BOOT_STATE_OTA");
+                esp_restart();
             }
             else if (pending_action == PPInjectorUI_system_action_reprovision)
             {
                 ESP_LOGW(TAG, "UI requested forced re-provisioning");
 #ifdef CONFIG_PORIS_ENABLE_PROVISIONING
-                s_forced_provisioning_magic = FORCED_PROVISIONING_MAGIC;
-                ESP_LOGW(TAG, "Rebooting into forced provisioning mode");
-                esp_restart();
+                boot_state_noinit = BOOT_STATE_PROV_START;
+                ESP_LOGW(TAG, "Forgetting credentials and rebooting into BOOT_STATE_PROV_START");
+                Provisioning_forget();
 #else
                 ESP_LOGW(TAG, "Re-provision request ignored: provisioning component disabled");
 #endif
             }
-            #endif
+#endif
 
-            if (!ota_checked)
+            if (ota_enabled && !ota_checked)
             {
                 if (check_ip_valid())
                 {
+                    char ota_running_ver[32] = "unknown";
+                    char ota_target_ver[32] = "unknown";
+                    char ota_status[192];
+#if defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+                    if (!ui_enabled)
+                    {
+                        if (!TouchScreen_boot_display_ready())
+                        {
+                            esp_err_t d_err = TouchScreen_boot_display_init();
+                            if (d_err != ESP_OK)
+                            {
+                                ESP_LOGW(TAG, "boot display init failed before OTA: %s", esp_err_to_name(d_err));
+                            }
+                        }
+                        if (TouchScreen_boot_display_ready())
+                        {
+                            OTA_get_running_version(ota_running_ver, sizeof(ota_running_ver));
+                            OTA_get_target_version(ota_target_ver, sizeof(ota_target_ver));
+                            snprintf(ota_status, sizeof(ota_status),
+                                     "OTA IN PROGRESS\nCUR %s\nNEW %s\nSTARTING",
+                                     ota_running_ver, ota_target_ver);
+                            TouchScreen_boot_display_draw_center_text(ota_status, 0xFFFF, 0x0000);
+                        }
+                    }
+#endif
                     // Boot-time actions
                     // Check OTA
                     OTA_enable();
                     OTA_start();
-                    // If OTA has not rebooted, we should continue
                     OTA_disable();
                     ota_checked = true;
+
+                    /*
+                     * From this point on, this branch owns the whole flow.
+                     * It must exit only via esp_restart(): either triggered by OTA library
+                     * on success, or by this branch after OTA task has ended.
+                     */
+                    int last_pct = -1;
+                    while (OTA_is_running())
+                    {
+#if defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+                        if (!ui_enabled && TouchScreen_boot_display_ready())
+                        {
+                            int read_len = OTA_get_image_len_read();
+                            int total_len = OTA_get_image_total_len();
+                            int pct = 0;
+                            if (total_len > 0)
+                            {
+                                pct = (int)((100LL * read_len) / total_len);
+                                if (pct > 100)
+                                {
+                                    pct = 100;
+                                }
+                            }
+                            if (pct != last_pct)
+                            {
+                                OTA_get_running_version(ota_running_ver, sizeof(ota_running_ver));
+                                OTA_get_target_version(ota_target_ver, sizeof(ota_target_ver));
+                                snprintf(ota_status, sizeof(ota_status),
+                                         "OTA IN PROGRESS\nCUR %s\nNEW %s\nPROG %d",
+                                         ota_running_ver, ota_target_ver, pct);
+                                TouchScreen_boot_display_draw_center_text(ota_status, 0xFFFF, 0x0000);
+                                last_pct = pct;
+                            }
+                        }
+#endif
+                        vTaskDelay(pdMS_TO_TICKS(200));
+                    }
+
+#if defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+                    if (!ui_enabled && TouchScreen_boot_display_ready())
+                    {
+                        esp_err_t ota_err = OTA_get_last_error();
+                        OTA_get_running_version(ota_running_ver, sizeof(ota_running_ver));
+                        OTA_get_target_version(ota_target_ver, sizeof(ota_target_ver));
+                        snprintf(ota_status, sizeof(ota_status),
+                                 "OTA FAILED\nCUR %s\nNEW %s\nERR 0x%04x\nREBOOT IN 10 S",
+                                 ota_running_ver, ota_target_ver, (unsigned)(ota_err & 0xFFFF));
+                        TouchScreen_boot_display_draw_center_text(ota_status, 0xFFFF, 0x0000);
+                    }
+#endif
+                    ESP_LOGW(TAG, "OTA task finished without reboot. Rebooting in 10 seconds.");
+                    vTaskDelay(pdMS_TO_TICKS(10000));
+                    esp_restart();
                 }
             }
 #endif
 #if defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN) || defined(CONFIG_PORIS_ENABLE_UIDEMO) || defined(CONFIG_PORIS_ENABLE_LCDFLAG) || defined(CONFIG_PORIS_ENABLE_PPINJECTORUI)
-            if (!ui_started)
+            if (!ui_started && ui_enabled)
             {
                 /* UI must not block on network/provisioning availability. */
                 if (init_ui_components() != app_main_ret_ok)
@@ -1140,6 +1614,38 @@ void app_main(void)
                 {
                     ui_started = true;
                     ESP_LOGI(TAG, "UI components started.");
+                }
+            }
+#endif
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) && defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN) && !defined(CONFIG_TOUCHSCREEN_RGB_PANEL_PROFILE_ELECROW)
+            if (!ui_enabled)
+            {
+                main_try_render_provisioning_qr();
+            }
+#endif
+#if defined(CONFIG_PORIS_ENABLE_PROVISIONING) && defined(CONFIG_PORIS_ENABLE_TOUCHSCREEN)
+            if (!ui_enabled && s_prov_status_dirty)
+            {
+                if (!TouchScreen_boot_display_ready())
+                {
+                    esp_err_t d_err = TouchScreen_boot_display_init();
+                    if (d_err != ESP_OK)
+                    {
+                        ESP_LOGW(TAG, "boot status display init failed: %s", esp_err_to_name(d_err));
+                    }
+                }
+                if (TouchScreen_boot_display_ready())
+                {
+                    esp_err_t err = TouchScreen_boot_display_draw_center_text(s_prov_status_pending, 0xFFFF, 0x0000);
+                    if (err != ESP_OK)
+                    {
+                        ESP_LOGW(TAG, "boot status draw failed: %s", esp_err_to_name(err));
+                    }
+                    else
+                    {
+                        ESP_LOGI(TAG, "boot status painted");
+                        s_prov_status_dirty = false;
+                    }
                 }
             }
 #endif
@@ -1170,7 +1676,6 @@ void app_main(void)
             {
                 ESP_LOGW(TAG, "Could not run all  components!!!");
             }
-
         }
     }
 }

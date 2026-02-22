@@ -223,6 +223,7 @@ void TouchScreen_execute_function_safemode(void (*callback)())
 
 static bool s_display_inited = false;
 static bool s_lvgl_ready = false;
+static bool s_boot_display_ready = false;
 
 static void touchscreen_main(void)
 {
@@ -326,4 +327,65 @@ void TouchScreen_lvgl_unlock(void)
 {
     if (!s_lvgl_ready) return;
     lvgl_port_unlock();
+}
+
+bool TouchScreen_boot_display_ready(void)
+{
+    return s_boot_display_ready;
+}
+
+esp_err_t TouchScreen_boot_display_init(void)
+{
+    if (s_display_inited)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_boot_display_ready)
+    {
+        return ESP_OK;
+    }
+
+    esp_err_t err = TouchScreen_display_boot_init();
+    if (err == ESP_OK)
+    {
+        s_boot_display_ready = true;
+    }
+    return err;
+}
+
+esp_err_t TouchScreen_boot_display_clear(uint16_t color)
+{
+    if (!s_boot_display_ready)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return TouchScreen_display_boot_clear(color);
+}
+
+esp_err_t TouchScreen_boot_display_fill_rect(int x, int y, int w, int h, uint16_t color)
+{
+    if (!s_boot_display_ready)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return TouchScreen_display_boot_fill_rect(x, y, w, h, color);
+}
+
+esp_err_t TouchScreen_boot_display_draw_center_text(const char *text, uint16_t fg, uint16_t bg)
+{
+    if (!s_boot_display_ready)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return TouchScreen_display_boot_draw_center_text(text, fg, bg);
+}
+
+int TouchScreen_boot_display_width(void)
+{
+    return TouchScreen_display_boot_width();
+}
+
+int TouchScreen_boot_display_height(void)
+{
+    return TouchScreen_display_boot_height();
 }

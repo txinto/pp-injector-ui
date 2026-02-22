@@ -192,6 +192,23 @@ constexpr uint32_t NETWORK_HOLD_GRAY_MS = 3000;
 constexpr uint32_t NETWORK_HOLD_OTA_MS = 6000;
 constexpr uint32_t NETWORK_HOLD_REPROVISION_MS = 10000;
 
+// Shared geometry constants.
+constexpr float TURNS_TO_TOP = 22.53f;
+constexpr float TURNS_TO_BOTTOM = 360.5f;
+constexpr float TURNS_MIN = 0.0f;
+constexpr float TURNS_MAX = TURNS_TO_BOTTOM;
+constexpr int BARREL_INNER_TOP_Y = 0;
+constexpr int BARREL_INNER_HEIGHT = 793;
+constexpr int TIP_HEIGHT = 80;
+// Plunger calibration (keep aligned with the previously tuned behavior).
+constexpr int PLUNGER_TIP_ANCHOR_Y = 711;
+constexpr int PLUNGER_TIP_TRAVEL_PX = PLUNGER_TIP_ANCHOR_Y; // 711
+constexpr float PLUNGER_PX_PER_TURN =
+    static_cast<float>(PLUNGER_TIP_TRAVEL_PX) /
+    (TURNS_TO_BOTTOM - TURNS_TO_TOP);
+constexpr float REFILL_PX_PER_TURN = PLUNGER_PX_PER_TURN;
+constexpr int REFILL_STACK_BOTTOM_Y = 770;
+
 const char *COMMON_FIELD_NAMES[] = {
     "Trap Accel",          "Compress Torque",  "Micro Interval (ms)",
     "Micro Duration (ms)", "Purge Up",         "Purge Down",
@@ -222,6 +239,16 @@ constexpr int MOULD_FIELD_TYPE[] = {0, 1, 1, 1, 1, 1, 1, 1,
 
 constexpr int MOULD_FIELD_COUNT =
     sizeof(MOULD_FIELD_NAMES) / sizeof(MOULD_FIELD_NAMES[0]);
+
+struct RefillBlock {
+  float volume; // cm3
+  uint32_t addedMs;
+  bool active;
+
+  RefillBlock() : volume(0), addedMs(0), active(false) {}
+  RefillBlock(float v, uint32_t a, bool act)
+      : volume(v), addedMs(a), active(act) {}
+};
 
 struct UiState {
   bool initialized = false;
@@ -283,6 +310,14 @@ struct UiState {
   bool networkGestureActive = false;
   lv_point_t networkGestureStartPoint = {0, 0};
   uint32_t networkGestureStartMs = 0;
+
+  RefillBlock refillBlocks[16];
+  int blockCount = 0;
+  char lastState[24] = "";
+  float startRefillPos = 0;
+  float lastFramePos = 0;
+  bool isRefilling = false;
+  bool refillSequenceActive = false;
 };
 
 UiState ui;
@@ -788,26 +823,27 @@ void updateLeftReadouts(const DisplayComms::Status &status) {
 
 void updatePlungerPosition(float turns) {
   // Calibrated linear mapping from encoder turns to on-screen plunger Y.
-  static const float MAX_TURNS = 360.5f;
-  static const float PX_PER_TURN = 711.0f / (360.5f - 22.53f);
-  static const int TIP_ANCHOR_Y = 700;
+  // This calibration is intentionally kept as the previously tuned plunger behavior.
+  static const int MIN_Y_OFFSET = -750;
+  static const int MAX_Y_OFFSET = 13;
 
   float clampedTurns = turns;
-  if (clampedTurns < 0.0f) {
-    clampedTurns = 0.0f;
+  if (clampedTurns < TURNS_MIN) {
+    clampedTurns = TURNS_MIN;
   }
-  if (clampedTurns > MAX_TURNS) {
-    clampedTurns = MAX_TURNS;
+  if (clampedTurns > TURNS_MAX) {
+    clampedTurns = TURNS_MAX;
   }
 
-  float targetTipY = (clampedTurns - 22.53f) * PX_PER_TURN;
-  int yOffset = static_cast<int>(targetTipY) - TIP_ANCHOR_Y;
+  const int targetTipY =
+      static_cast<int>((clampedTurns - TURNS_TO_TOP) * PLUNGER_PX_PER_TURN);
+  int yOffset = targetTipY - PLUNGER_TIP_ANCHOR_Y;
 
-  if (yOffset < -750) {
-    yOffset = -750;
+  if (yOffset < MIN_Y_OFFSET) {
+    yOffset = MIN_Y_OFFSET;
   }
-  if (yOffset > 13) {
-    yOffset = 13;
+  if (yOffset > MAX_Y_OFFSET) {
+    yOffset = MAX_Y_OFFSET;
   }
 
   if (isObjReady(objects.plunger_tip__plunger)) {
@@ -822,6 +858,122 @@ void updatePlungerPosition(float turns) {
   if (isObjReady(objects.obj5__plunger)) {
     lv_obj_set_y(objects.obj5__plunger, yOffset);
   }
+}
+
+void updateRefillBlocks(const DisplayComms::Status &status) {
+  float currentPos = status.encoderTurns;
+  const char *state = status.state;
+
+  if (strcmp(state, "REFILL") == 0) {
+    if (!ui.refillSequenceActive) {
+      ui.refillSequenceActive = true;
+      ui.startRefillPos = currentPos;
+      Serial.printf("PRD_UI: Refill sequence started at %.2f\n", currentPos);
+    }
+    ui.isRefilling = true;
+  } else {
+    ui.isRefilling = false;
+  }
+
+  if (strcmp(state, "READY_TO_INJECT") == 0 &&
+      strcmp(ui.lastState, "READY_TO_INJECT") != 0 && ui.refillSequenceActive) {
+    float spaceBelowPlunger = 360.5f - currentPos;
+    if (spaceBelowPlunger < 0) {
+      spaceBelowPlunger = 0;
+    }
+
+    float existingVolume = 0.0f;
+    for (int i = 0; i < ui.blockCount; i++) {
+      existingVolume += ui.refillBlocks[i].volume;
+    }
+
+    float delta = spaceBelowPlunger - existingVolume;
+    if (delta > 0.5f) {
+      if (ui.blockCount < 16) {
+        ui.refillBlocks[ui.blockCount] = RefillBlock(delta, millis(), true);
+        ui.blockCount++;
+        Serial.printf("PRD_UI: Refill block added vol=%.2f count=%d\n", delta,
+                      ui.blockCount);
+      } else {
+        Serial.println("PRD_UI: Refill block limit reached");
+      }
+    } else {
+      Serial.printf("PRD_UI: Refill block ignored delta=%.2f\n", delta);
+    }
+
+    ui.refillSequenceActive = false;
+  }
+
+  if (currentPos > ui.lastFramePos) {
+    float consumedCm3 = currentPos - ui.lastFramePos;
+    if (consumedCm3 > 0.001f && consumedCm3 < 100.0f) {
+      while (consumedCm3 > 0.001f && ui.blockCount > 0) {
+        if (ui.refillBlocks[0].volume > consumedCm3) {
+          ui.refillBlocks[0].volume -= consumedCm3;
+          consumedCm3 = 0;
+        } else {
+          consumedCm3 -= ui.refillBlocks[0].volume;
+          for (int i = 0; i < ui.blockCount - 1; i++) {
+            ui.refillBlocks[i] = ui.refillBlocks[i + 1];
+          }
+          ui.blockCount--;
+          ui.refillBlocks[ui.blockCount] = RefillBlock();
+        }
+      }
+    }
+  }
+
+  ui.lastFramePos = currentPos;
+  strncpy(ui.lastState, state, sizeof(ui.lastState) - 1);
+}
+
+void renderRefillBlocksForBands(lv_obj_t **bands) {
+  if (!bands) {
+    return;
+  }
+
+  const float pxPerTurn = REFILL_PX_PER_TURN;
+  int y = REFILL_STACK_BOTTOM_Y;
+  uint32_t now = millis();
+
+  for (int i = 0; i < 16; i++) {
+    lv_obj_t *band = bands[i];
+    if (!isObjReady(band)) {
+      continue;
+    }
+
+    if (i < ui.blockCount) {
+      int h = static_cast<int>(ui.refillBlocks[i].volume * pxPerTurn);
+      if (h < 1) {
+        h = 1;
+      }
+      y -= h;
+      lv_obj_set_size(band, 80, h);
+      lv_obj_set_pos(band, -8, y);
+      lv_obj_clear_flag(band, LV_OBJ_FLAG_HIDDEN);
+
+      uint32_t age = now - ui.refillBlocks[i].addedMs;
+      lv_color_t color;
+      if (age < 10000) {
+        color = lv_color_hex(0x3498db);
+      } else if (age < 30000) {
+        color = lv_color_hex(0xe67e22);
+      } else {
+        color = lv_color_hex(0xe74c3c);
+      }
+      lv_obj_set_style_bg_color(band, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+      lv_obj_add_flag(band, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
+
+void renderAllPlungers() {
+  lv_obj_t **allObjects = (lv_obj_t **)&objects;
+  renderRefillBlocksForBands(&allObjects[6]);
+  renderRefillBlocksForBands(&allObjects[29]);
+  renderRefillBlocksForBands(&allObjects[58]);
+  renderRefillBlocksForBands(&allObjects[104]);
 }
 
 void onNavigate(lv_event_t *event) {
@@ -2047,7 +2199,9 @@ void tick() {
   const DisplayComms::MouldParams &mould = DisplayComms::getMould();
   const DisplayComms::CommonParams &common = DisplayComms::getCommon();
 
+  updateRefillBlocks(status);
   updatePlungerPosition(status.encoderTurns);
+  renderAllPlungers();
   updateLeftReadouts(status);
   updateStateWidgets(status);
   updateErrorFrames(status);

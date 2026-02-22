@@ -16,15 +16,6 @@ config PROVISIONING_USE_THREAD
       your scheduler.
     depends on PORIS_ENABLE_PROVISIONING
 
-config PROVISIONING_AUTOSTART_IF_NOT_PROVISIONED
-    bool "Auto-start provisioning on boot when device is not provisioned"
-    default y
-    help
-      If enabled, boot will start provisioning transport (BLE/SoftAP) when the
-      device has no stored Wi-Fi credentials. Disable this to keep boot RAM usage
-      lower and let the application run without provisioning/wifi.
-    depends on PORIS_ENABLE_PROVISIONING
-
 config PROVISIONING_PERIOD_MS
     int "Provisioning period (ms)"
     range 10 600000
@@ -157,6 +148,13 @@ menu "Provisioning Configuration"
         default y
         help
             Show the QR code for provisioning.
+
+    config PROVISIONING_SERVICE_NAME_PREFIX
+        string "Provisioning service name prefix"
+        default "PROV_"
+        help
+            Prefix used to build the advertised provisioning service name.
+            Example: PROV_ABC123.
 
     config PROV_USING_BLUEDROID
         bool

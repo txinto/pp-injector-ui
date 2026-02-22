@@ -14,7 +14,7 @@ message(STATUS "[main] REQUIRES(final)='${_reqs}'")
 
 idf_component_register(
   SRCS "app_main.c"
-  PRIV_REQUIRES spi_flash mqtt json nvs_flash
+  PRIV_REQUIRES spi_flash mqtt json nvs_flash espressif__qrcode
   REQUIRES ${_reqs}
   INCLUDE_DIRS "."
 )

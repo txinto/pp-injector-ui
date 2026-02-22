@@ -17,3 +17,5 @@ output.txt
 *.tmp
 *.swp
 .DS_Store
+
+/releases

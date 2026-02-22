@@ -1,6 +1,7 @@
 // BEGIN --- Standard C headers section ---
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 // END   --- Standard C headers section ---
 
@@ -29,6 +30,7 @@
 // END   --- ESP-IDF headers section ---
 
 #include <wifi_provisioning/manager.h>
+#include "qrcode.h"
 
 // BEGIN --- Project configuration section ---
 #include <PrjCfg.h> // Including project configuration module 
@@ -40,13 +42,16 @@
 
 // END --- Self-includes section ---
 
-#ifndef CONFIG_PROVISIONING_AUTOSTART_IF_NOT_PROVISIONED
-#define CONFIG_PROVISIONING_AUTOSTART_IF_NOT_PROVISIONED 1
-#endif
-
 // BEGIN --- Logging related variables
 static const char *TAG = "Provisioning";
 // END --- Logging related variables
+
+static char s_prov_qr_payload[180];
+static bool s_prov_qr_payload_ready = false;
+static Provisioning_qr_payload_callback_t s_qr_payload_callback = NULL;
+static Provisioning_status_callback_t s_status_callback = NULL;
+static char s_status_text[192];
+static char s_service_name[12];
 
 // BEGIN --- Internal variables (DRE)
 Provisioning_dre_t Provisioning_dre = {
@@ -66,7 +71,6 @@ Provisioning_dre_t Provisioning_dre = {
 #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
 #include <wifi_provisioning/scheme_softap.h>
 #endif /* CONFIG_PROV_TRANSPORT_SOFTAP */
-#include "qrcode.h"
 
 
 #if CONFIG_PROV_SECURITY_VERSION_2
@@ -138,12 +142,39 @@ static esp_err_t example_get_sec2_verifier(const char **verifier, uint16_t *veri
 /* Signal Wi-Fi events on this event-group */
 const int WIFI_CONNECTED_EVENT = BIT0;
 static EventGroupHandle_t wifi_event_group;
-static bool s_restart_after_provisioned_connect = false;
 
 #define PROV_QR_VERSION "v1"
 #define PROV_TRANSPORT_SOFTAP "softap"
 #define PROV_TRANSPORT_BLE "ble"
 #define QRCODE_BASE_URL "https://espressif.github.io/esp-jumpstart/qrcode.html"
+
+static void provisioning_publish_statusf(const char *fmt, ...)
+{
+    if (!s_status_callback || !fmt)
+    {
+        return;
+    }
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(s_status_text, sizeof(s_status_text), fmt, args);
+    va_end(args);
+    s_status_callback(s_status_text);
+}
+
+static const char *wifi_reason_to_text(int reason)
+{
+    switch (reason)
+    {
+    case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
+    case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL";
+    case WIFI_REASON_ASSOC_FAIL: return "ASSOC_FAIL";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+    case WIFI_REASON_CONNECTION_FAIL: return "CONNECTION_FAIL";
+    case WIFI_REASON_BEACON_TIMEOUT: return "BEACON_TIMEOUT";
+    case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY: return "INACTIVITY";
+    default: return "UNKNOWN";
+    }
+}
 
 /* Event handler for catching system events */
 static void event_handler(void *arg, esp_event_base_t event_base,
@@ -158,6 +189,8 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         {
         case WIFI_PROV_START:
             ESP_LOGI(TAG, "Provisioning started");
+            provisioning_publish_statusf("PROVISIONING STARTED\nBLE %s\nUSE MOBILE APP",
+                                         s_service_name[0] ? s_service_name : "PPI_?");
             break;
         case WIFI_PROV_CRED_RECV:
         {
@@ -166,6 +199,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
                           "\n\tSSID     : %s\n\tPassword : %s",
                      (const char *)wifi_sta_cfg->ssid,
                      (const char *)wifi_sta_cfg->password);
+            provisioning_publish_statusf("CREDENTIALS RECEIVED\nCONNECTING TO WIFI...");
             break;
         }
         case WIFI_PROV_CRED_FAIL:
@@ -174,6 +208,9 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGE(TAG, "Provisioning failed!\n\tReason : %s"
                           "\n\tPlease reset to factory and retry provisioning",
                      (*reason == WIFI_PROV_STA_AUTH_ERROR) ? "Wi-Fi station authentication failed" : "Wi-Fi access-point not found");
+            provisioning_publish_statusf("WIFI CONNECT ERROR\n%d (%s)",
+                                         (int)*reason,
+                                         (*reason == WIFI_PROV_STA_AUTH_ERROR) ? "AUTH_FAIL" : "AP_NOT_FOUND");
 #ifdef CONFIG_PROV_RESET_PROV_MGR_ON_FAILURE
             retries++;
             if (retries >= CONFIG_PROV_MGR_MAX_RETRY_CNT)
@@ -208,6 +245,13 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
             ESP_LOGI(TAG, "Disconnected. Connecting to the AP again...");
+            if (event_data)
+            {
+                wifi_event_sta_disconnected_t *disc = (wifi_event_sta_disconnected_t *)event_data;
+                provisioning_publish_statusf("WIFI DISCONNECTED\nreason=%d (%s)",
+                                             (int)disc->reason,
+                                             wifi_reason_to_text((int)disc->reason));
+            }
             esp_wifi_connect();
             break;
 #ifdef CONFIG_PROV_TRANSPORT_SOFTAP
@@ -230,15 +274,10 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         Provisioning_dre.ip.addr = event->ip_info.ip.addr; 
         strcpy(Provisioning_dre.ssid, (char *)wifi_data.ssid);
         ESP_LOGI(TAG, "Connected with IP Address:" IPSTR, IP2STR(&event->ip_info.ip));
+        provisioning_publish_statusf("PROVISIONED OK\nIP " IPSTR "\nWAITING NEXT STEP", IP2STR(&event->ip_info.ip));
         Provisioning_dre.ip_valid = true;
         /* Signal main application to continue execution */
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_EVENT);
-        if (s_restart_after_provisioned_connect)
-        {
-            s_restart_after_provisioned_connect = false;
-            ESP_LOGI(TAG, "Provisioning completed and Wi-Fi connected, restarting");
-            esp_restart();
-        }
 #ifdef CONFIG_PROV_TRANSPORT_BLE
     }
     else if (event_base == PROTOCOMM_TRANSPORT_BLE_EVENT)
@@ -285,7 +324,7 @@ static void wifi_init_sta(void)
 static void get_device_service_name(char *service_name, size_t max)
 {
     uint8_t eth_mac[6];
-    const char *ssid_prefix = "PROV_";
+    const char *ssid_prefix = CONFIG_PROVISIONING_SERVICE_NAME_PREFIX;
     esp_wifi_get_mac(WIFI_IF_STA, eth_mac);
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
@@ -340,6 +379,14 @@ static void wifi_prov_print_qr(const char *name, const char *username, const cha
                                            ",\"transport\":\"%s\"}",
                  PROV_QR_VERSION, name, transport);
     }
+    strncpy(s_prov_qr_payload, payload, sizeof(s_prov_qr_payload) - 1);
+    s_prov_qr_payload[sizeof(s_prov_qr_payload) - 1] = '\0';
+    s_prov_qr_payload_ready = true;
+    if (s_qr_payload_callback)
+    {
+        s_qr_payload_callback(s_prov_qr_payload);
+    }
+    provisioning_publish_statusf("PROVISIONING IN PROGRESS\nBLE: %s\nUSE MOBILE APP", name ? name : "N/A");
 #ifdef CONFIG_PROV_SHOW_QR
     ESP_LOGI(TAG, "Scan this QR code from the provisioning application for Provisioning.");
     esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
@@ -349,9 +396,7 @@ static void wifi_prov_print_qr(const char *name, const char *username, const cha
 }
 
 
-static Provisioning_return_code_t provision_app(bool force_reprovision,
-                                                bool block_until_connected,
-                                                bool allow_provisioning_start)
+void provision_app(void)
 {
 
     /* Initialize TCP/IP */
@@ -386,34 +431,17 @@ static Provisioning_return_code_t provision_app(bool force_reprovision,
     bool provisioned = false;
 #ifdef CONFIG_PROV_RESET_PROVISIONED
     wifi_prov_mgr_reset_provisioning();
-    provisioned = false;
 #else
     /* Let's find out if the device is provisioned */
     ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
 #endif
 
-    if (force_reprovision)
-    {
-        ESP_LOGW(TAG, "Forcing reprovision: clearing stored Wi-Fi credentials");
-        wifi_prov_mgr_reset_provisioning();
-        provisioned = false;
-    }
-
-    /* Keep boot non-blocking and lightweight when app chooses to run offline. */
-    if (!provisioned)
-    {
-        if (!allow_provisioning_start)
-        {
-            s_restart_after_provisioned_connect = false;
-            ESP_LOGW(TAG, "Device not provisioned and provisioning start is disabled.");
-            return Provisioning_ret_error;
-        }
-    }
+    ESP_LOGI(TAG, "Provisioning check: provisioned=%d", provisioned ? 1 : 0);
 
     /* If device is not yet provisioned start provisioning service */
     if (!provisioned)
     {
-        s_restart_after_provisioned_connect = true;
+        ESP_LOGI(TAG, "Provisioning flow: entering initial provisioning mode");
         /* Configuration for the provisioning manager */
         wifi_prov_mgr_config_t config = {
         /* What is the Provisioning Scheme that we want ?
@@ -454,6 +482,7 @@ static Provisioning_return_code_t provision_app(bool force_reprovision,
          */
         char service_name[12];
         get_device_service_name(service_name, sizeof(service_name));
+        snprintf(s_service_name, sizeof(s_service_name), "%s", service_name);
 #ifdef CONFIG_PROV_SECURITY_VERSION_1
         /* What is the security level that we want (0, 1, 2):
          *      - WIFI_PROV_SECURITY_0 is simply plain text communication.
@@ -576,25 +605,19 @@ static Provisioning_return_code_t provision_app(bool force_reprovision,
 #else  /* CONFIG_PROV_TRANSPORT_SOFTAP */
         wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_SOFTAP);
 #endif /* CONFIG_PROV_TRANSPORT_BLE */
-        if (block_until_connected)
-        {
-            ESP_LOGI(TAG, "Waiting for provisioning Wi-Fi connection...");
-            xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
-        }
-        ESP_LOGI(TAG, "Provisioning service started.");
+        /* Wait for Wi-Fi connection */
+        xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
+
+        ESP_LOGI(TAG, "Successfully provisioned, rebooting in 10 s");
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+        esp_restart();
     }
     else
     {
-        s_restart_after_provisioned_connect = false;
         ESP_LOGI(TAG, "Already provisioned, starting Wi-Fi STA");
 
         /* Start Wi-Fi station */
         wifi_init_sta();
-        if (block_until_connected)
-        {
-            ESP_LOGI(TAG, "Waiting for Wi-Fi STA connection...");
-            xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
-        }
     }
 
     /* Wait for Wi-Fi connection */
@@ -625,7 +648,6 @@ static Provisioning_return_code_t provision_app(bool force_reprovision,
      }
 */
 #endif
-    return Provisioning_ret_ok;
 }
 
 
@@ -636,20 +658,50 @@ void Provisioning_forget(void)
     ESP_LOGI(TAG, "Forgetting credentials");
 
     wifi_config_t wifi_cfg = {0};
+    esp_err_t err = esp_wifi_stop();
 
-    esp_err_t err = esp_wifi_disconnect();
-    
+    if (err == ESP_ERR_WIFI_NOT_INIT)
+    {
+        ESP_LOGW(TAG, "Wi-Fi not initialized, initializing STA to clear credentials");
+
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        esp_netif_create_default_wifi_sta();
+        esp_err_t init_err = esp_wifi_init(&cfg);
+        if (init_err != ESP_OK && init_err != ESP_ERR_INVALID_STATE)
+        {
+            ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(init_err));
+        }
+        else
+        {
+            esp_wifi_set_mode(WIFI_MODE_STA);
+            err = esp_wifi_stop();
+        }
+    }
+    else if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED)
+    {
+        ESP_LOGW(TAG, "esp_wifi_stop failed: %s", esp_err_to_name(err));
+    }
+
     err = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+    if (err == ESP_ERR_WIFI_STATE)
+    {
+        ESP_LOGW(TAG, "Wi-Fi busy state while clearing config, retrying after stop");
+        esp_wifi_stop();
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+        err = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+    }
+
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to set wifi config, 0x%x", err);
+        ESP_LOGE(TAG, "Failed to clear wifi config, 0x%x (%s)", err, esp_err_to_name(err));
     }
     else
     {
         ESP_LOGI(TAG, "********* CREDENTIALS FORGOTTEN !!! ******");
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
-        esp_restart();
     }
+
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    esp_restart();
 }
 
 #if CONFIG_PROVISIONING_USE_THREAD
@@ -823,20 +875,69 @@ bool Provisioning_ip_valid(void)
     return ret;
 }
 
-bool Provisioning_has_credentials(void)
+bool Provisioning_is_provisioned(void)
 {
     bool provisioned = false;
     esp_err_t err = wifi_prov_mgr_is_provisioned(&provisioned);
-    if (err != ESP_OK)
+    if (err == ESP_OK)
     {
-        ESP_LOGD(TAG, "wifi_prov_mgr_is_provisioned unavailable: %s", esp_err_to_name(err));
+        return provisioned;
+    }
+
+    /* If Wi-Fi driver is not initialized yet, init minimally and retry once. */
+    bool wifi_initialized_here = false;
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    err = esp_wifi_init(&cfg);
+    if (err == ESP_OK)
+    {
+        wifi_initialized_here = true;
+    }
+    else if (err != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGW(TAG, "is_provisioned: esp_wifi_init failed (%s)", esp_err_to_name(err));
         return false;
     }
+
+    err = wifi_prov_mgr_is_provisioned(&provisioned);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "is_provisioned: wifi_prov_mgr_is_provisioned failed (%s)", esp_err_to_name(err));
+        provisioned = false;
+    }
+
+    if (wifi_initialized_here)
+    {
+        esp_wifi_deinit();
+    }
+
     return provisioned;
+}
+
+void Provisioning_set_qr_payload_callback(Provisioning_qr_payload_callback_t callback)
+{
+    s_qr_payload_callback = callback;
+}
+
+bool Provisioning_get_last_qr_payload(char *dst, size_t dst_len)
+{
+    if (!dst || dst_len == 0 || !s_prov_qr_payload_ready)
+    {
+        return false;
+    }
+    strncpy(dst, s_prov_qr_payload, dst_len - 1);
+    dst[dst_len - 1] = '\0';
+    return true;
+}
+
+void Provisioning_set_status_callback(Provisioning_status_callback_t callback)
+{
+    s_status_callback = callback;
 }
 
 
 // END   ------------------ Public API (MULTITASKING)------------------
+
+void provision_app(void);
 
 // BEGIN ------------------ Public API (COMMON + SPIN)------------------
 /**
@@ -864,20 +965,9 @@ Provisioning_return_code_t Provisioning_setup(void)
         return Provisioning_ret_error;
     }
 #endif
-    Provisioning_return_code_t ret = provision_app(false, false, CONFIG_PROVISIONING_AUTOSTART_IF_NOT_PROVISIONED);
-    Provisioning_dre.last_return_code = ret;
-    return ret;
-}
-
-Provisioning_return_code_t Provisioning_start_on_demand(bool force_reprovision,
-                                                        bool block_until_connected,
-                                                        bool allow_provisioning_if_missing_credentials)
-{
-    Provisioning_return_code_t ret = provision_app(force_reprovision,
-                                                   block_until_connected,
-                                                   allow_provisioning_if_missing_credentials);
-    Provisioning_dre.last_return_code = ret;
-    return ret;
+    provision_app();
+    Provisioning_dre.last_return_code = Provisioning_ret_ok;
+    return Provisioning_ret_ok;
 }
 
 #if CONFIG_PROVISIONING_USE_THREAD

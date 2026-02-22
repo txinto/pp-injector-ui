@@ -6,6 +6,7 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <esp_netif.h>
 // ------------------ BEGIN Return code ------------------
 typedef enum {
@@ -97,23 +98,14 @@ Provisioning_return_code_t Provisioning_disable(void);
 void Provisioning_forget(void);
 
 bool Provisioning_ip_valid(void);
-bool Provisioning_has_credentials(void);
+bool Provisioning_is_provisioned(void);
 
-/**
- * Start networking/provisioning on demand.
- * force_reprovision:
- *   true  -> clear stored credentials and start provisioning service.
- *   false -> if credentials exist, start Wi-Fi STA; if not, return error.
- * block_until_connected:
- *   true  -> wait until STA gets IP.
- *   false -> return immediately after starting service/STA.
- * allow_provisioning_if_missing_credentials:
- *   true  -> if credentials are missing, start provisioning service.
- *   false -> if credentials are missing, return error.
- */
-Provisioning_return_code_t Provisioning_start_on_demand(bool force_reprovision,
-                                                        bool block_until_connected,
-                                                        bool allow_provisioning_if_missing_credentials);
+typedef void (*Provisioning_qr_payload_callback_t)(const char *payload);
+void Provisioning_set_qr_payload_callback(Provisioning_qr_payload_callback_t callback);
+bool Provisioning_get_last_qr_payload(char *dst, size_t dst_len);
+
+typedef void (*Provisioning_status_callback_t)(const char *status);
+void Provisioning_set_status_callback(Provisioning_status_callback_t callback);
 
 #ifdef __cplusplus
 }
