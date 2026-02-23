@@ -1,73 +1,73 @@
 # pp-injector-ui
 
-Firmware HMI (pantalla táctil) para PP Injector basado en **ESP-IDF** (ESP32-S3).
+Touchscreen HMI firmware for PP Injector, based on **ESP-IDF** (ESP32-S3).
 
-Este proyecto es la evolución de `pp-motorized-injector-ui` (PlatformIO/Arduino + LVGL), migrado y adaptado a un entorno de firmware de producción con variantes, provisioning, OTA y utilidades de release.
+This repository is the evolution of `pp-motorized-injector-ui` (PlatformIO/Arduino + LVGL), migrated and adapted to a production-oriented firmware setup with variants, provisioning, OTA, and release tooling.
 
-## Objetivo
-- Mostrar estado de máquina, posición del plunger y temperatura.
-- Permitir interacción local de UI (pantalla táctil).
-- Integrar conectividad para provisioning BLE/Wi-Fi y OTA.
-- Mantener variantes de hardware del producto PPInjector.
+## Purpose
+- Display machine state, plunger position, and temperature.
+- Provide local touchscreen UI interaction.
+- Integrate network provisioning (BLE/Wi-Fi) and OTA updates.
+- Support PPInjector hardware variants.
 
-## Variantes
-Las variantes están definidas en `esp_idf_project_configuration.json`:
+## Variants
+Variants are defined in `esp_idf_project_configuration.json`:
 - `PPInjectorElecrow`
 - `PPInjectorWave`
 
-En el flujo diario de este repo, la variante preferida es **PPInjectorElecrow**.
+For day-to-day work in this repository, the preferred/default variant is **PPInjectorElecrow**.
 
-## Estructura relevante
-- `main/`: arranque y FSM principal (`app_main.c`).
-- `components/`: componentes del firmware (UI, TouchScreen, OTA, Provisioning, etc.).
-- `sdkcfg/`: overlays/feature defaults por variante.
-- `buildcfg/`: sdkconfig defaults combinados por variante.
-- `scripts/`: utilidades de desarrollo/release/publicación OTA.
-- `releases/`: artefactos generados para distribución.
+## Relevant Structure
+- `main/`: startup flow and main FSM (`app_main.c`).
+- `components/`: firmware components (UI, TouchScreen, OTA, Provisioning, etc.).
+- `sdkcfg/`: per-variant feature/default overlays.
+- `buildcfg/`: generated combined sdkconfig defaults per variant.
+- `scripts/`: development, release, and OTA publish helpers.
+- `releases/`: generated distributable artifacts.
 
-## Build rápido
-Ejemplo típico para Elecrow:
+## Quick Build
+Typical Elecrow build:
 
 ```bash
 idf.py -DVARIANT=PPInjectorElecrow build
 ```
 
-Flasheo/monitor (ajusta puerto):
+Flash/monitor (adjust port):
 
 ```bash
 idf.py -p /dev/ttyACM1 flash monitor
 ```
 
-## Flujo de release
-### 1) Empaquetar release local
+## Release Flow
+### 1) Package local release
 Script:
 - `scripts/make_release_ppinjectorelecrow.py`
 
-Genera un directorio como:
+Generates a folder like:
 - `releases/ppinjectorelecrow_<version>/`
 
-Usa `version.txt`, copia `bin/elf/map`, `flash_args` y dependencias de flasheo, y además genera:
+It reads `version.txt`, copies `bin/elf/map`, `flash_args` and flashing dependencies, and also generates:
 - `ppinjectorelecrow_<version>.bin`
 
-### 2) Publicar binario OTA
+### 2) Publish OTA binary
 Script:
 - `scripts/publish_ota_ppinjectorelecrow.py`
 
-Publica `pp-injector-ui.bin` desde una release hacia el repo público OTA (ruta configurable en `scripts/config_secrets.py`).
+Publishes `pp-injector-ui.bin` from a release folder to the public OTA firmware repository (path configured in `scripts/config_secrets.py`).
 
-## Configuración local (no versionada)
-- Plantilla: `scripts/config_secrets.py.example`
-- Copia local: `scripts/config_secrets.py` (ignorada por git)
+## Local Non-Versioned Config
+- Template: `scripts/config_secrets.py.example`
+- Local copy: `scripts/config_secrets.py` (git-ignored)
 
-Actualmente se usa para definir, al menos:
-- `PUBLIC_REPO`: ruta local al repo público de firmware OTA.
+Currently used for:
+- `PUBLIC_REPO`: local path to the public OTA firmware repository.
 
-## Notas de diseño
-- El proyecto prioriza estabilidad de firmware y trazabilidad de variantes.
-- Cambios de comportamiento en boot/provisioning/OTA deben validarse siempre en hardware real.
+## Design Notes
+- The project prioritizes firmware stability and variant traceability.
+- Any change in boot/provisioning/OTA behavior must be validated on real hardware.
 
-## Antecedente
-Proyecto de referencia (histórico):
+## Historical Antecedent
+Reference (historical) project:
 - `/home/txinto/repos/cbots/pp-motorized-injector-ui`
 
-Este repo (`pp-injector-ui`) es la línea activa en ESP-IDF.
+This repository (`pp-injector-ui`) is the active ESP-IDF line.

@@ -1,97 +1,97 @@
 # PRD — pp-injector-ui (ESP-IDF)
 
-**Versión:** 1.0  
-**Estado:** Activo  
-**Proyecto:** `pp-injector-ui`
+**Version:** 1.0  
+**Status:** Active  
+**Project:** `pp-injector-ui`
 
-## 1. Propósito
-Desarrollar y mantener el firmware de interfaz de usuario (HMI) para PP Injector en ESP32-S3, con soporte de:
-- Visualización de estado y magnitudes clave (posición, temperatura, estado de máquina).
-- Interacción táctil.
-- Provisioning de red (BLE/Wi-Fi).
-- Actualización OTA.
-- Variantes de hardware PPInjector.
+## 1. Purpose
+Develop and maintain the PP Injector HMI firmware on ESP32-S3 with support for:
+- Live display of state and key magnitudes (position, temperature, machine state).
+- Touchscreen interaction.
+- Network provisioning (BLE/Wi-Fi).
+- OTA firmware updates.
+- PPInjector hardware variants.
 
-## 2. Alcance
-Incluye:
-- Firmware ESP-IDF del HMI.
-- UI y lógica de representación (plunger/barrel y pantallas de estado).
-- Integración con componentes de comunicaciones y configuración.
-- Scripts de release y publicación OTA.
+## 2. Scope
+Includes:
+- ESP-IDF HMI firmware.
+- UI and visual logic (plunger/barrel and status screens).
+- Integration with communication and configuration components.
+- Release and OTA publish scripts.
 
-No incluye:
-- Firmware de control de motor/actuador externo al HMI.
-- Backend cloud o app móvil de provisioning (solo integración del lado dispositivo).
+Excludes:
+- Motor/actuator control firmware external to the HMI.
+- Cloud backend or mobile app implementation (device-side integration only).
 
-## 3. Plataforma objetivo
+## 3. Target Platform
 - MCU: ESP32-S3
 - Framework: ESP-IDF
-- Variantes soportadas:
+- Supported variants:
   - `PPInjectorElecrow`
   - `PPInjectorWave`
 
-## 4. Requisitos funcionales
-### 4.1 UI operativa
-- Mostrar estado de sistema de forma continua.
-- Mostrar posición/plunger y temperatura.
-- Permitir interacción táctil estable.
+## 4. Functional Requirements
+### 4.1 Operational UI
+- Continuously display system status.
+- Display position/plunger and temperature.
+- Provide stable touch interaction.
 
 ### 4.2 Provisioning
-- Entrar en modo provisioning cuando corresponda por estado de arranque.
-- Publicar identificador BLE de provisioning (prefijo PPI_* según configuración).
-- Informar al usuario del estado de provisioning en pantalla/log.
+- Enter provisioning mode according to boot state.
+- Expose BLE provisioning identifier (PPI_* prefix, per configuration).
+- Provide clear provisioning status to users via screen/logs.
 
 ### 4.3 OTA
-- Soportar arranque en modo OTA según boot state.
-- Mostrar progreso OTA en modo boot-display (sin LVGL completo).
-- Reinicio controlado al finalizar o fallar OTA según política de aplicación.
+- Support OTA mode based on boot state.
+- Show OTA progress in lightweight boot-display mode (without full LVGL UI).
+- Perform controlled reboot after OTA success/failure according to application policy.
 
-### 4.4 Persistencia y configuración
-- Mantener configuración/credenciales y estado de boot según flujo definido.
-- Soportar particionado y artefactos de flash por variante.
+### 4.4 Persistence and Configuration
+- Preserve configuration/credentials and boot state according to defined flow.
+- Support variant-specific partitioning and flash artifacts.
 
-## 5. Requisitos no funcionales
-- Estabilidad en memoria (especialmente en modos provisioning/OTA sin UI completa).
-- Trazas suficientes para diagnóstico de boot/provisioning/OTA.
-- Reproducibilidad de builds por variante.
-- Scripts de release/publish simples y auditables.
+## 5. Non-Functional Requirements
+- Memory stability, especially in provisioning/OTA modes without full UI.
+- Sufficient logs for boot/provisioning/OTA diagnostics.
+- Reproducible variant-specific builds.
+- Simple, auditable release/publish scripts.
 
-## 6. Arquitectura (alto nivel)
+## 6. Architecture (High-Level)
 - `main/app_main.c`:
-  - FSM de arranque.
-  - Orquestación de provisioning, OTA y arranque UI.
+  - Boot FSM.
+  - Provisioning, OTA, and UI startup orchestration.
 - `components/PPInjectorUI`:
-  - UI y lógica visual principal.
+  - Main UI and visual logic.
 - `components/TouchScreen`:
-  - Backend display/touch (incluyendo modo boot-display ligero).
+  - Display/touch backend, including lightweight boot-display mode.
 - `components/Provisioning`:
-  - Provisioning BLE/Wi-Fi y estado asociado.
+  - BLE/Wi-Fi provisioning and related state.
 - `components/OTA`:
-  - Flujo OTA y estado de progreso.
+  - OTA flow and progress state.
 
-## 7. Variantes y build
-Fuente de verdad de variantes:
+## 7. Variants and Build
+Source of truth for variants:
 - `esp_idf_project_configuration.json`
 
-Regla operativa por defecto:
-- Compilar y validar con `PPInjectorElecrow`, salvo instrucción explícita para otra variante.
+Operational default rule:
+- Build and validate with `PPInjectorElecrow` unless explicitly instructed otherwise.
 
-## 8. Release y distribución
-### 8.1 Empaquetado
+## 8. Release and Distribution
+### 8.1 Packaging
 - Script: `scripts/make_release_ppinjectorelecrow.py`
-- Entrada: `build_ppinjectorelecrow`
-- Salida: `releases/ppinjectorelecrow_<version>/`
+- Input: `build_ppinjectorelecrow`
+- Output: `releases/ppinjectorelecrow_<version>/`
 
-### 8.2 Publicación OTA
+### 8.2 OTA Publishing
 - Script: `scripts/publish_ota_ppinjectorelecrow.py`
-- Copia binario a repo público de firmware OTA.
-- Requiere repo destino limpio (`pristine`) antes de commit/pull/push.
+- Copies firmware binary to public OTA repository.
+- Requires destination repo to be pristine before commit/pull/push.
 
-## 9. Criterios de aceptación
-- Build exitoso en `PPInjectorElecrow`.
-- Flujo provisioning funcional en hardware objetivo.
-- Flujo OTA funcional y con feedback visual/log.
-- Scripts de release/publish operativos extremo a extremo.
+## 9. Acceptance Criteria
+- Successful build on `PPInjectorElecrow`.
+- Functional provisioning flow on target hardware.
+- Functional OTA flow with visual/log feedback.
+- Release/publish scripts working end-to-end.
 
-## 10. Trazabilidad con antecedente
-Este PRD adapta el antecedente de `pp-motorized-injector-ui` a la realidad actual de `pp-injector-ui` en ESP-IDF, manteniendo intención funcional pero ajustando arquitectura, tooling y flujo de entrega.
+## 10. Traceability to Antecedent
+This PRD adapts the antecedent from `pp-motorized-injector-ui` to the current ESP-IDF reality of `pp-injector-ui`, preserving functional intent while updating architecture, tooling, and delivery workflow.

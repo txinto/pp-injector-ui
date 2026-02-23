@@ -1,13 +1,13 @@
-# Instrucciones Para IAs Colaboradoras
+# Instructions for AI Collaborators
 
-Este repositorio es `pp-injector-ui`.
+This repository is `pp-injector-ui`.
 
-Regla obligatoria por defecto:
-- **Salvo instrucción expresa del usuario, compila siempre con la variante `PPInjectorElecrow`** definida en `esp_idf_project_configuration.json`.
+Default mandatory rule:
+- **Unless explicitly instructed otherwise by the user, always build using the `PPInjectorElecrow` variant** defined in `esp_idf_project_configuration.json`.
 
-Implicaciones prácticas:
-- Build directory por defecto: `build_ppinjectorelecrow`.
-- Defaults de sdkconfig por defecto: `buildcfg/sdkconfig.PPInjectorElecrow.defaults`.
-- No cambies de variante automáticamente aunque exista `PPInjectorWave`.
+Practical implications:
+- Default build directory: `build_ppinjectorelecrow`.
+- Default sdkconfig defaults: `buildcfg/sdkconfig.PPInjectorElecrow.defaults`.
+- Do not switch variants automatically, even if `PPInjectorWave` exists.
 
-Solo cambia a otra variante si el usuario lo pide explícitamente en ese turno.
+Only switch to another variant when the user explicitly asks for it in that turn.
