@@ -1,5 +1,8 @@
 /build
 /build_*
+!/build_*/
+/build_*/**
+!/build_*/sdkconfig
 managed_components/
 .vscode
 output.txt
