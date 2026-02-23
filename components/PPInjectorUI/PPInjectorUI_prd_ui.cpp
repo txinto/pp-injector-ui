@@ -964,8 +964,7 @@ void updateRefillBlocks(const DisplayComms::Status &status) {
   } else if (strcmp(state, "READY_TO_INJECT") == 0) {
     if (ui.refillStage == 2) {
       // Stage 3: Entered READY_TO_INJECT from COMPRESSION
-      // Calculate volume: total space below plunger minus already accounted
-      // blocks
+      // Initial addition: calculate space below plunger minus existing volume
       float spaceBelowPlunger = TURNS_TO_BOTTOM - currentTurns;
       if (spaceBelowPlunger < 0)
         spaceBelowPlunger = 0;
@@ -981,22 +980,52 @@ void updateRefillBlocks(const DisplayComms::Status &status) {
           ui.refillBlocks[ui.blockCount] = RefillBlock(delta, millis(), true);
           ui.blockCount++;
           ui.currentBlockVol = delta;
-          Serial.printf("PRD_UI: Refill block added vol=%.2f count=%d\n", delta,
-                        ui.blockCount);
+          ui.refillStage = 3; // Enter adjustment phase
+          Serial.printf("PRD_UI: Refill block initial vol=%.2f count=%d\n",
+                        delta, ui.blockCount);
         } else {
           Serial.println("PRD_UI: Refill block limit reached");
+          ui.refillStage = 0;
         }
+      } else {
+        ui.refillStage = 0;
       }
-      ui.refillStage = 0;
-      Serial.println("PRD_UI: Refill Stage 3 Complete (Ready)");
+    } else if (ui.refillStage == 3) {
+      // Live Adjustment Phase: Update top block volume based on plunger
+      // position This allows micro-compressions to reduce the reported volume
+      // live
+      if (ui.blockCount > 0) {
+        float spaceBelowPlunger = TURNS_TO_BOTTOM - currentTurns;
+        if (spaceBelowPlunger < 0)
+          spaceBelowPlunger = 0;
+
+        float volumeBelow = 0.0f;
+        for (int i = 0; i < ui.blockCount - 1; i++) {
+          volumeBelow += ui.refillBlocks[i].volume;
+        }
+
+        float adjustedVol = spaceBelowPlunger - volumeBelow;
+        if (adjustedVol < 0.1f)
+          adjustedVol = 0.1f;
+
+        ui.refillBlocks[ui.blockCount - 1].volume = adjustedVol;
+        ui.currentBlockVol = adjustedVol;
+      }
     } else if (strcmp(ui.lastState, "READY_TO_INJECT") != 0 &&
-               ui.refillStage != 0) {
-      // Interrupted sequence
+               ui.refillStage != 0 && ui.refillStage != 3) {
+      // Interrupted sequence (if not in adjustment phase)
       ui.refillStage = 0;
       Serial.println("PRD_UI: Refill Stage reset (interrupted)");
     }
-  } else if (strcmp(state, "HOME") == 0 || strcmp(state, "INIT_HEATING") == 0) {
-    ui.refillStage = 0;
+  } else {
+    // Left READY_TO_INJECT state
+    if (ui.refillStage == 3) {
+      ui.refillStage = 0; // Lock volume
+      Serial.println("PRD_UI: Refill block volume locked");
+    }
+    if (strcmp(state, "HOME") == 0 || strcmp(state, "INIT_HEATING") == 0) {
+      ui.refillStage = 0;
+    }
   }
 
   // Selective Movement: Only consume blocks during Injection states
