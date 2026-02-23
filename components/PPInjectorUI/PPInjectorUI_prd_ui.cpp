@@ -1080,7 +1080,6 @@ void onMouldProfileSelect(lv_event_t *event) {
   ui.selectedMould = index;
 
   for (int i = 0; i < ui.mouldProfileCount; i++) {
-    Serial.printf("PRD_UI: rebuild idx=%d/%d\n", i + 1, ui.mouldProfileCount);
     if (!ui.mouldProfileButtons[i]) {
       continue;
     }
@@ -1215,27 +1214,29 @@ void rebuildMouldList() {
       lv_obj_set_style_border_color(button, lv_color_hex(0x41505f),
                                     LV_PART_MAIN | LV_STATE_DEFAULT);
     }
-    ui.mouldProfileButtons[i] = button;
-    y += 54;
-    if ((i & 1) == 1) {
-      uiYield();
-    }
   }
+  lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // Prevent jump on tap
+  ui.mouldProfileButtons[i] = button;
+  y += 54;
+  if ((i & 1) == 1) {
+    uiYield();
+  }
+}
 
-  if (ui.selectedMould >= ui.mouldProfileCount) {
-    ui.selectedMould = -1;
-  }
-  Serial.println("PRD_UI: rebuild after loop before sync");
-  syncMouldSendEditEnablement();
-  Serial.println("PRD_UI: rebuild after sync");
-  logUiState("rebuildMouldList");
-  lv_mem_monitor_t mon_after;
-  lv_mem_monitor(&mon_after);
-  ESP_LOGD(TAG,
-           "LVGL mem after rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
-           (unsigned)mon_after.free_size, (unsigned)mon_after.used_pct,
-           (unsigned)mon_after.frag_pct, (unsigned)mon_after.free_biggest_size);
-  Serial.println("PRD_UI: rebuild end");
+if (ui.selectedMould >= ui.mouldProfileCount) {
+  ui.selectedMould = -1;
+}
+Serial.println("PRD_UI: rebuild after loop before sync");
+syncMouldSendEditEnablement();
+Serial.println("PRD_UI: rebuild after sync");
+logUiState("rebuildMouldList");
+lv_mem_monitor_t mon_after;
+lv_mem_monitor(&mon_after);
+ESP_LOGD(TAG,
+         "LVGL mem after rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
+         (unsigned)mon_after.free_size, (unsigned)mon_after.used_pct,
+         (unsigned)mon_after.frag_pct, (unsigned)mon_after.free_biggest_size);
+Serial.println("PRD_UI: rebuild end");
 }
 
 void onMouldSend(lv_event_t *) {
@@ -1985,6 +1986,9 @@ void createMouldPanel() {
                                 LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_pad_all(ui.mouldList, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_scrollbar_mode(ui.mouldList, LV_SCROLLBAR_MODE_ACTIVE);
+  lv_obj_set_scroll_dir(ui.mouldList, LV_DIR_VER);
+  lv_obj_clear_flag(ui.mouldList, LV_OBJ_FLAG_SCROLL_ELASTIC);
+  lv_obj_clear_flag(ui.mouldList, LV_OBJ_FLAG_SCROLL_MOMENTUM);
 
   ui.mouldNotice = lv_label_create(ui.rightPanelMould);
   lv_obj_set_pos(ui.mouldNotice, 18, 592);
