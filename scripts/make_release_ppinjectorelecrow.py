@@ -4,7 +4,14 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import sys
 from pathlib import Path
+
+
+def is_likely_artifact_path_token(tok: str) -> bool:
+    lower = tok.lower()
+    artifact_exts = (".bin", ".elf", ".map", ".csv", ".txt")
+    return "/" in tok or lower.endswith(artifact_exts)
 
 
 def read_version(version_file: Path) -> str:
@@ -49,10 +56,42 @@ def parse_flash_args_paths(args_file: Path) -> list[Path]:
                 continue
             if "$<" in tok:
                 continue
+            if not is_likely_artifact_path_token(tok):
+                continue
             p = (args_file.parent / tok).resolve()
             if p.exists() and p.is_file():
                 paths.append(p)
     return paths
+
+
+def parse_flash_args_referenced_files(args_file: Path) -> tuple[list[Path], list[Path]]:
+    """Return (existing_files, missing_files) referenced from flash args."""
+    existing: list[Path] = []
+    missing: list[Path] = []
+    if not args_file.exists():
+        return existing, missing
+
+    text = args_file.read_text(encoding="utf-8")
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        tokens = line.split()
+        for tok in tokens:
+            if tok.startswith("-"):
+                continue
+            if tok.startswith("0x"):
+                continue
+            if "$<" in tok:
+                continue
+            if not is_likely_artifact_path_token(tok):
+                continue
+            p = (args_file.parent / tok).resolve()
+            if p.exists() and p.is_file():
+                existing.append(p)
+            else:
+                missing.append(p)
+    return existing, missing
 
 
 def find_main_app_bin(build_dir: Path, flash_args: Path) -> Path:
@@ -69,6 +108,26 @@ def find_main_app_bin(build_dir: Path, flash_args: Path) -> Path:
     if not bins:
         raise FileNotFoundError(f"No top-level .bin found in {build_dir}")
     return bins[0]
+
+
+def print_variant_not_built_or_incomplete(build_dir: Path, missing: list[str] | None = None) -> None:
+    if missing:
+        missing_lines = "\n".join(f"  - {m}" for m in missing)
+        state_msg = "ERROR: PPInjectorElecrow build is incomplete."
+        missing_msg = f"Missing/invalid artifacts:\n{missing_lines}\n"
+    else:
+        state_msg = "ERROR: PPInjectorElecrow variant is not compiled yet."
+        missing_msg = ""
+
+    msg = (
+        f"{state_msg}\n"
+        f"Expected build artifacts in: {build_dir}\n"
+        f"{missing_msg}"
+        "Compile first, then retry release packaging.\n"
+        "Suggested command in an ESP-IDF environment:\n"
+        "  idf.py -B build_ppinjectorelecrow -DVARIANT=PPInjectorElecrow -DSDKCONFIG=build_ppinjectorelecrow/sdkconfig build\n"
+    )
+    sys.stderr.write(msg)
 
 
 def main() -> int:
@@ -103,9 +162,37 @@ def main() -> int:
     version_file = (repo_root / args.version_file).resolve()
 
     if not build_dir.exists():
-        raise FileNotFoundError(f"Build directory not found: {build_dir}")
+        print_variant_not_built_or_incomplete(build_dir)
+        return 1
     if not version_file.exists():
         raise FileNotFoundError(f"Version file not found: {version_file}")
+
+    missing: list[str] = []
+
+    flash_args = build_dir / "flash_args"
+    if not flash_args.exists():
+        missing.append("flash_args")
+    else:
+        _, missing_from_args = parse_flash_args_referenced_files(flash_args)
+        for p in missing_from_args:
+            try:
+                missing.append(str(p.relative_to(build_dir)))
+            except ValueError:
+                missing.append(str(p))
+
+    # Ensure core artifact kinds exist before creating release directory.
+    for pattern in ("*.bin", "*.elf", "*.map"):
+        if not any(build_dir.rglob(pattern)):
+            missing.append(f"no files matching {pattern}")
+
+    try:
+        _ = find_main_app_bin(build_dir, flash_args)
+    except FileNotFoundError:
+        missing.append("top-level application .bin (from flash_args 0x10000 or fallback)")
+
+    if missing:
+        print_variant_not_built_or_incomplete(build_dir, missing)
+        return 1
 
     version = read_version(version_file)
     release_dir = releases_dir / f"{args.product_name}_{version}"
@@ -147,8 +234,15 @@ def main() -> int:
                 copied.add(dep)
 
     # 3) Copy/rename application bin to ppinjectorelecrow_<version>.bin
-    flash_args = build_dir / "flash_args"
-    app_bin = find_main_app_bin(build_dir, flash_args)
+    try:
+        app_bin = find_main_app_bin(build_dir, flash_args)
+    except FileNotFoundError:
+        print_variant_not_built_or_incomplete(
+            build_dir,
+            ["top-level application .bin (from flash_args 0x10000 or fallback)"],
+        )
+        return 1
+
     renamed_bin = release_dir / f"{args.product_name}_{version}.bin"
     shutil.copy2(app_bin, renamed_bin)
 
