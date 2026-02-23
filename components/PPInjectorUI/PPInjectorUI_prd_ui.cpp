@@ -343,6 +343,7 @@ struct UiState {
   int refillStage = 0; // 0=None, 1=Refill, 2=Compression
   float heatTimeMin = 10.0f;
   float currentBlockVol = 0.0f;
+  float blockStackLift = 0.0f; // Total upward turns of suction
 
   // Mould Edit State
   lv_obj_t *mouldEditScroll = nullptr;
@@ -950,6 +951,7 @@ void updateRefillBlocks(const DisplayComms::Status &status) {
 
   // 3-Stage Registration: REFILL -> COMPRESSION -> READY_TO_INJECT
   if (strcmp(state, "REFILL") == 0) {
+    ui.blockStackLift = 0; // Reset suction lift
     if (ui.refillStage != 1) {
       ui.refillStage = 1;
       Serial.println("PRD_UI: Refill Stage 1 (Refill)");
@@ -1025,27 +1027,52 @@ void updateRefillBlocks(const DisplayComms::Status &status) {
     }
     if (strcmp(state, "HOME") == 0 || strcmp(state, "INIT_HEATING") == 0) {
       ui.refillStage = 0;
+      ui.blockStackLift = 0;
     }
   }
 
-  // Selective Movement: Only consume blocks during Injection states
-  bool isMovingDown =
-      (strcmp(state, "INJECT") == 0 || strcmp(state, "HOLD_INJECTION") == 0);
+  // Dynamic Movement: Suction (Lift) and Consumption (Down)
+  float deltaTurns = currentTurns - ui.lastFramePos;
 
-  if (isMovingDown && currentTurns > ui.lastFramePos) {
-    float consumedCm3 = currentTurns - ui.lastFramePos;
-    if (consumedCm3 > 0.001f && consumedCm3 < 100.0f) {
-      while (consumedCm3 > 0.001f && ui.blockCount > 0) {
-        if (ui.refillBlocks[0].volume > consumedCm3) {
-          ui.refillBlocks[0].volume -= consumedCm3;
-          consumedCm3 = 0;
-        } else {
-          consumedCm3 -= ui.refillBlocks[0].volume;
-          for (int i = 0; i < ui.blockCount - 1; i++) {
-            ui.refillBlocks[i] = ui.refillBlocks[i + 1];
+  if (deltaTurns < -0.0001f) {
+    // Upward Movement (Suction)
+    // Apply suction in states where the plunger lifts plastic (release,
+    // antidrip)
+    if (strcmp(state, "READY_TO_INJECT") == 0 ||
+        strcmp(state, "ANTIDRIP") == 0 || strcmp(state, "RELEASE") == 0) {
+      ui.blockStackLift += (-deltaTurns);
+    }
+  } else if (deltaTurns > 0.0001f) {
+    // Downward Movement
+    // First, consume from the current lift (slack/air gap)
+    if (ui.blockStackLift > 0.0001f) {
+      float consumeFromLift =
+          (deltaTurns < ui.blockStackLift) ? deltaTurns : ui.blockStackLift;
+      ui.blockStackLift -= consumeFromLift;
+      deltaTurns -= consumeFromLift;
+    }
+
+    // If still moving down, consume from blocks (if in injection/purge states)
+    if (deltaTurns > 0.0001f) {
+      if (strcmp(state, "INJECT") == 0 ||
+          strcmp(state, "HOLD_INJECTION") == 0 ||
+          strcmp(state, "PURGE_ZERO") == 0) {
+
+        float consumedCm3 = deltaTurns;
+        if (consumedCm3 < 100.0f) {
+          while (consumedCm3 > 0.001f && ui.blockCount > 0) {
+            if (ui.refillBlocks[0].volume > consumedCm3) {
+              ui.refillBlocks[0].volume -= consumedCm3;
+              consumedCm3 = 0;
+            } else {
+              consumedCm3 -= ui.refillBlocks[0].volume;
+              for (int i = 0; i < ui.blockCount - 1; i++) {
+                ui.refillBlocks[i] = ui.refillBlocks[i + 1];
+              }
+              ui.blockCount--;
+              ui.refillBlocks[ui.blockCount] = RefillBlock();
+            }
           }
-          ui.blockCount--;
-          ui.refillBlocks[ui.blockCount] = RefillBlock();
         }
       }
     }
@@ -1061,7 +1088,8 @@ void renderRefillBlocksForBands(lv_obj_t **bands) {
   }
 
   const float pxPerTurn = REFILL_PX_PER_TURN;
-  int y = REFILL_STACK_BOTTOM_Y;
+  int y =
+      REFILL_STACK_BOTTOM_Y - static_cast<int>(ui.blockStackLift * pxPerTurn);
   uint32_t now = millis();
 
   for (int i = 0; i < 16; i++) {
