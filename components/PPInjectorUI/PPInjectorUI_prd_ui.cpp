@@ -185,6 +185,7 @@ constexpr lv_coord_t LEFT_X = 8;
 constexpr lv_coord_t LEFT_WIDTH = 114;
 constexpr lv_coord_t RIGHT_X = 130;
 constexpr lv_coord_t RIGHT_WIDTH = 350;
+constexpr lv_coord_t SCREEN_WIDTH = 480;
 constexpr lv_coord_t SCREEN_HEIGHT = 800;
 constexpr int MAX_MOULD_PROFILES = 16;
 constexpr uint32_t DOUBLE_TAP_MS = 420;
@@ -227,15 +228,14 @@ constexpr int COMMON_FIELD_COUNT =
 // ... (Common fields)
 
 const char *MOULD_FIELD_NAMES[] = {
-    "Name",         "Fill Volume",  "Fill Speed",    "Fill Pressure",
-    "Pack Volume",  "Pack Speed",   "Pack Pressure", "Pack Time",
-    "Cooling Time", "Fill Accel",   "Fill Decel",    "Pack Accel",
-    "Pack Decel",   "Mode (2D/3D)", "Inject Torque",
+    "Name",         "Fill Volume",   "Fill Speed",    "Fill Pressure",
+    "Pack Volume",  "Pack Speed",    "Pack Pressure", "Pack Time",
+    "Fill Accel",   "Fill Decel",    "Pack Accel",    "Pack Decel",
+    "Mode (2D/3D)", "Inject Torque",
 };
 
 // 0=String, 1=Float, 2=Integer (none currently)
-constexpr int MOULD_FIELD_TYPE[] = {0, 1, 1, 1, 1, 1, 1, 1,
-                                    1, 1, 1, 1, 1, 0, 1};
+constexpr int MOULD_FIELD_TYPE[] = {0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1};
 
 constexpr int MOULD_FIELD_COUNT =
     sizeof(MOULD_FIELD_NAMES) / sizeof(MOULD_FIELD_NAMES[0]);
@@ -268,7 +268,9 @@ struct UiState {
   lv_obj_t *stateValue = nullptr;
   lv_obj_t *stateAction1 = nullptr;
   lv_obj_t *stateAction2 = nullptr;
+  lv_obj_t *stateAction3 = nullptr;
   lv_obj_t *mainErrorLabel = nullptr;
+  lv_obj_t *globalEodFrame = nullptr;
 
   lv_obj_t *mouldList = nullptr;
   lv_obj_t *mouldNotice = nullptr;
@@ -298,10 +300,17 @@ struct UiState {
   // Mould Edit State
   lv_obj_t *mouldEditScroll = nullptr;
   lv_obj_t *mouldEditInputs[MOULD_FIELD_COUNT] = {};
+  lv_obj_t *mouldModeDropdown = nullptr; // Dropdown for 2D/3D mode field
   lv_obj_t *mouldEditKeyboard =
       nullptr; // Separate keyboard for safety/simplicity
+  lv_obj_t *mouldEditViewOnlyNotice = nullptr; // Notice label for slot-0
+  lv_obj_t *mouldEditSaveBtn = nullptr;
+  lv_obj_t *mouldEditTitle = nullptr;
   DisplayComms::MouldParams editMouldSnapshot = {};
   bool mouldEditDirty = false;
+  bool editingCurrentMould = false; // true when viewing slot 0 (read-only)
+  bool mouldQueriedOnce = false;
+  bool commonQueriedOnce = false;
 
   char lastMouldName[32] = {0};
 
@@ -325,6 +334,13 @@ UiState ui;
 inline bool isObjReady(lv_obj_t *obj) { return obj && lv_obj_is_valid(obj); }
 
 inline void uiYield() { delay(0); }
+
+void onMouldEdit(lv_event_t *e);
+void onMouldNew(lv_event_t *e);
+void onMouldDelete(lv_event_t *e);
+void onMouldSend(lv_event_t *e);
+void syncMouldSendEditEnablement();
+void rebuildMouldList();
 
 void disablePlungerAreaScroll() {
   lv_obj_t *locked[] = {
@@ -772,7 +788,21 @@ lv_obj_t *createRightPanel(lv_obj_t *screen) {
 }
 
 void updateErrorFrames(const DisplayComms::Status &status) {
-  bool hasError = (status.errorCode != 0) || (status.errorMsg[0] != '\0');
+  static uint16_t lastErrorCode = 0xFFFF;
+  static char lastErrorMsg[64] = {1}; // Force initial update
+
+  bool hasError = (status.errorCode != 0);
+  bool changed = (status.errorCode != lastErrorCode) ||
+                 (strcmp(status.errorMsg, lastErrorMsg) != 0);
+
+  if (!changed) {
+    return;
+  }
+
+  lastErrorCode = status.errorCode;
+  strncpy(lastErrorMsg, status.errorMsg, sizeof(lastErrorMsg) - 1);
+  lastErrorMsg[sizeof(lastErrorMsg) - 1] = '\0';
+
   lv_obj_t *panels[] = {ui.rightPanelMain, ui.rightPanelMould,
                         ui.rightPanelCommon, ui.rightPanelMouldEdit};
 
@@ -789,11 +819,16 @@ void updateErrorFrames(const DisplayComms::Status &status) {
   if (ui.mainErrorLabel) {
     if (hasError) {
       char text[120];
-      if (status.errorMsg[0] != '\0') {
+      if (status.errorMsg[0] != '\0' &&
+          strcmp(status.errorMsg, "QUERY_RESPONSE") != 0) {
         snprintf(text, sizeof(text), "ERROR 0x%X: %s", status.errorCode,
                  status.errorMsg);
-      } else {
+      } else if (status.errorCode != 0) {
         snprintf(text, sizeof(text), "ERROR 0x%X", status.errorCode);
+      } else {
+        // Safety: hide if it's just a dummy response with no actual code
+        lv_obj_add_flag(ui.mainErrorLabel, LV_OBJ_FLAG_HIDDEN);
+        return;
       }
       setLabelTextIfChanged(ui.mainErrorLabel, text);
       lv_obj_clear_flag(ui.mainErrorLabel, LV_OBJ_FLAG_HIDDEN);
@@ -823,7 +858,8 @@ void updateLeftReadouts(const DisplayComms::Status &status) {
 
 void updatePlungerPosition(float turns) {
   // Calibrated linear mapping from encoder turns to on-screen plunger Y.
-  // This calibration is intentionally kept as the previously tuned plunger behavior.
+  // This calibration is intentionally kept as the previously tuned plunger
+  // behavior.
   static const int MIN_Y_OFFSET = -750;
   static const int MAX_Y_OFFSET = 13;
 
@@ -991,11 +1027,43 @@ void onNavigate(lv_event_t *event) {
     logUiState("onNavigate.after");
   };
   lv_async_call(navigate_async, reinterpret_cast<void *>(target));
+
+  // Trigger queries when entering settings screens so they populate from
+  // the Controller's current live values. Also reset stale notice text.
+  if (target == SCREEN_ID_MOULD_SETTINGS) {
+    DisplayComms::sendQueryMould(); // Always refresh slot 0 (current mould)
+    if (ui.mouldNotice)
+      lv_label_set_text(ui.mouldNotice, "Select a profile.");
+  } else if (target == SCREEN_ID_COMMON_SETTINGS) {
+    if (!ui.commonQueriedOnce) {
+      DisplayComms::sendQueryCommon();
+      ui.commonQueriedOnce = true;
+    }
+    if (ui.commonNotice)
+      lv_label_set_text(ui.commonNotice, "Edit and press Send.");
+  }
 }
 
 void onStateActionQueryState(lv_event_t *) { DisplayComms::sendQueryState(); }
-
 void onStateActionQueryError(lv_event_t *) { DisplayComms::sendQueryError(); }
+
+void onStateActionGotoReady(lv_event_t *) {
+  DisplayComms::sendCmdGoto("READY_TO_INJECT");
+}
+void onStateActionGotoRefill(lv_event_t *) {
+  DisplayComms::sendCmdGoto("REFILL");
+}
+void onStateActionGotoPurge(lv_event_t *) {
+  DisplayComms::sendCmdGoto("PURGE_ZERO");
+}
+void onStateActionGotoHome(lv_event_t *) { DisplayComms::sendCmdGoto("HOME"); }
+void onStateActionGotoCompression(lv_event_t *) {
+  DisplayComms::sendCmdGoto("COMPRESSION");
+}
+
+void onStateActionToggleEndOfDay(lv_event_t *) {
+  DisplayComms::sendCmdToggle("EOD");
+}
 
 void onMouldProfileSelect(lv_event_t *event) {
   int index = static_cast<int>(
@@ -1028,8 +1096,9 @@ void onMouldProfileSelect(lv_event_t *event) {
   }
 
   if (isDoubleTap) {
-    setNotice(ui.mouldNotice, "Edit flow pending: use Send for now.");
+    onMouldEdit(nullptr);
   }
+  syncMouldSendEditEnablement();
   Serial.printf("PRD_UI: onMouldProfileSelect index=%d doubleTap=%d\n", index,
                 static_cast<int>(isDoubleTap));
   logUiState("onMouldProfileSelect");
@@ -1038,30 +1107,35 @@ void onMouldProfileSelect(lv_event_t *event) {
 void syncMouldSendEditEnablement() {
   bool hasSelection =
       ui.selectedMould >= 0 && ui.selectedMould < ui.mouldProfileCount;
+  // Slot 0 is the read-only current controller mould. Edit is allowed (view
+  // mode) but Delete is blocked. Send is available for any selected slot.
+  bool isEditable = hasSelection /*&& ui.selectedMould > 0*/; // Edit = view OK
+  bool isDeletable = hasSelection && ui.selectedMould > 0;
 
-  // Serial.printf("PRD_UI: sync begin sel=%d count=%d hasSel=%d edit=%p send=%p
-  // del=%p\n",
-  //               ui.selectedMould, ui.mouldProfileCount,
-  //               static_cast<int>(hasSelection),
-  //               (void *)ui.mouldButtonEdit, (void *)ui.mouldButtonSend,
-  //               (void *)ui.mouldButtonDelete);
-
-  // Serial.println("PRD_UI: sync before edit");
   setButtonEnabled(ui.mouldButtonEdit, hasSelection);
-  // Serial.println("PRD_UI: sync after edit");
 
-  // Serial.println("PRD_UI: sync before safeForUpdate");
   bool safeForUpdate = DisplayComms::isSafeForUpdate();
-  // Serial.printf("PRD_UI: sync safeForUpdate=%d\n",
-  // static_cast<int>(safeForUpdate));
-
-  // Serial.println("PRD_UI: sync before send");
   setButtonEnabled(ui.mouldButtonSend, hasSelection && safeForUpdate);
-  // Serial.println("PRD_UI: sync after send");
+  setButtonEnabled(ui.mouldButtonDelete, isDeletable);
 
-  // Serial.println("PRD_UI: sync before delete");
-  setButtonEnabled(ui.mouldButtonDelete, hasSelection);
-  // Serial.println("PRD_UI: sync after delete");
+  // Re-apply selection highlight (can be lost after list rebuild)
+  for (int i = 0; i < ui.mouldProfileCount; i++) {
+    if (!ui.mouldProfileButtons[i])
+      continue;
+    if (i == ui.selectedMould) {
+      lv_obj_set_style_bg_color(ui.mouldProfileButtons[i],
+                                lv_color_hex(0x2d7dd2),
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else if (i == 0) {
+      lv_obj_set_style_bg_color(ui.mouldProfileButtons[0],
+                                lv_color_hex(0x1a3a2a),
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+      lv_obj_set_style_bg_color(ui.mouldProfileButtons[i],
+                                lv_color_hex(0x26303a),
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+  }
 }
 
 void rebuildMouldList() {
@@ -1104,19 +1178,43 @@ void rebuildMouldList() {
   int y = 8;
   for (int i = 0; i < renderCount; i++) {
     Serial.printf("PRD_UI: rebuild idx=%d/%d\n", i + 1, ui.mouldProfileCount);
-    char safeName[sizeof(ui.mouldProfiles[i].name)];
+    char safeName[sizeof(ui.mouldProfiles[i].name) + 12];
     safeName[0] = '\0';
-    strncpy(safeName, ui.mouldProfiles[i].name, sizeof(safeName) - 1);
-    safeName[sizeof(safeName) - 1] = '\0';
-    const char *name = safeName[0] != '\0' ? safeName : "Unnamed Mould";
-    lv_obj_t *button =
-        createButton(ui.mouldList, name, 8, y, 286, 46, onMouldProfileSelect,
-                     reinterpret_cast<void *>(static_cast<intptr_t>(i)));
-    lv_obj_set_style_bg_color(button, lv_color_hex(0x26303a),
-                              LV_PART_MAIN | LV_STATE_DEFAULT);
+    if (i == 0) {
+      // Slot 0 = current controller mould (read-only)
+      char tmp[sizeof(ui.mouldProfiles[0].name)];
+      strncpy(tmp, ui.mouldProfiles[0].name, sizeof(tmp) - 1);
+      tmp[sizeof(tmp) - 1] = '\0';
+      snprintf(safeName, sizeof(safeName), "(current) %s",
+               tmp[0] != '\0' ? tmp : "...");
+    } else {
+      strncpy(safeName, ui.mouldProfiles[i].name, sizeof(safeName) - 1);
+      safeName[sizeof(safeName) - 1] = '\0';
+      if (safeName[0] == '\0')
+        strncpy(safeName, "Unnamed Mould", sizeof(safeName) - 1);
+    }
+    lv_obj_t *button = createButton(
+        ui.mouldList, safeName, 8, y, 286, 46, onMouldProfileSelect,
+        reinterpret_cast<void *>(static_cast<intptr_t>(i)));
+    if (i == 0) {
+      // Current mould: green tint, slightly different border
+      lv_obj_set_style_bg_color(button, lv_color_hex(0x1a3a2a),
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+      lv_obj_set_style_border_color(button, lv_color_hex(0x2e6b44),
+                                    LV_PART_MAIN | LV_STATE_DEFAULT);
+      // Tint the label green
+      lv_obj_t *lbl = lv_obj_get_child(button, 0);
+      if (lbl)
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x7fe8a0), 0);
+    } else {
+      lv_obj_set_style_bg_color(button, lv_color_hex(0x26303a),
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
     lv_obj_set_style_border_width(button, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(button, lv_color_hex(0x41505f),
-                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+    if (i != 0) {
+      lv_obj_set_style_border_color(button, lv_color_hex(0x41505f),
+                                    LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
     ui.mouldProfileButtons[i] = button;
     y += 54;
     if ((i & 1) == 1) {
@@ -1218,12 +1316,53 @@ void onMouldEditFieldChanged(lv_event_t *event) { ui.mouldEditDirty = true; }
 
 void onMouldEditCancel(lv_event_t *) {
   hideMouldEditKeyboard();
+  ui.editingCurrentMould = false;
+  if (ui.mouldEditViewOnlyNotice)
+    lv_obj_add_flag(ui.mouldEditViewOnlyNotice, LV_OBJ_FLAG_HIDDEN);
+  if (ui.mouldEditTitle)
+    lv_label_set_text(ui.mouldEditTitle, "Edit Mould");
+  if (ui.mouldEditSaveBtn) {
+    lv_label_set_text(lv_obj_get_child(ui.mouldEditSaveBtn, 0), "Save");
+  }
+  // Also re-enable all fields
+  for (int i = 0; i < MOULD_FIELD_COUNT; i++) {
+    lv_obj_t *input = ui.mouldEditInputs[i];
+    if (i == 12)
+      input = ui.mouldModeDropdown;
+    if (!input)
+      continue;
+    lv_obj_clear_state(input, LV_STATE_DISABLED);
+  }
   lv_obj_add_flag(ui.rightPanelMouldEdit, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(ui.rightPanelMould, LV_OBJ_FLAG_HIDDEN);
 }
 
 void onMouldEditSave(lv_event_t *) {
   hideMouldEditKeyboard();
+
+  // Slot 0 is view-only (current controller mould); block save.
+  if (ui.editingCurrentMould) {
+    lv_obj_add_flag(ui.rightPanelMouldEdit, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(ui.rightPanelMould, LV_OBJ_FLAG_HIDDEN);
+    ui.editingCurrentMould = false; // Reset view-only state
+    if (ui.mouldEditViewOnlyNotice)
+      lv_obj_add_flag(ui.mouldEditViewOnlyNotice, LV_OBJ_FLAG_HIDDEN);
+    if (ui.mouldEditTitle)
+      lv_label_set_text(ui.mouldEditTitle, "Edit Mould");
+    if (ui.mouldEditSaveBtn) {
+      lv_label_set_text(lv_obj_get_child(ui.mouldEditSaveBtn, 0), "Save");
+    }
+    // Also re-enable all fields
+    for (int i = 0; i < MOULD_FIELD_COUNT; i++) {
+      lv_obj_t *input = ui.mouldEditInputs[i];
+      if (i == 12)
+        input = ui.mouldModeDropdown;
+      if (!input)
+        continue;
+      lv_obj_clear_state(input, LV_STATE_DISABLED);
+    }
+    return;
+  }
 
   // Save inputs back to snapshot -> ui.mouldProfiles
   DisplayComms::MouldParams &p = ui.mouldProfiles[ui.selectedMould];
@@ -1235,15 +1374,12 @@ void onMouldEditSave(lv_event_t *) {
     if (!txt)
       continue;
 
-    if (MOULD_FIELD_TYPE[i] == 0) { // String
+    if (MOULD_FIELD_TYPE[i] == 0) { // String field (only Name at i==0)
       if (i == 0) {
         strncpy(p.name, txt, sizeof(p.name) - 1);
         p.name[sizeof(p.name) - 1] = 0;
       }
-      if (i == 13) {
-        strncpy(p.mode, txt, sizeof(p.mode) - 1);
-        p.mode[sizeof(p.mode) - 1] = 0;
-      }
+      // Mode (i==12) is a dropdown — saved separately after the loop.
     } else { // Float
       float val = atof(txt);
       switch (i) {
@@ -1269,25 +1405,36 @@ void onMouldEditSave(lv_event_t *) {
         p.packTime = val;
         break;
       case 8:
-        p.coolingTime = val;
-        break;
-      case 9:
         p.fillAccel = val;
         break;
-      case 10:
+      case 9:
         p.fillDecel = val;
         break;
-      case 11:
+      case 10:
         p.packAccel = val;
         break;
-      case 12:
+      case 11:
         p.packDecel = val;
         break;
-      case 14:
-        p.injectTorque = val;
+      default:
         break;
       }
     }
+  }
+
+  // Save mode from dropdown (field 12)
+  if (ui.mouldModeDropdown) {
+    uint16_t sel = lv_dropdown_get_selected(ui.mouldModeDropdown);
+    const char *modeStr = (sel == 0) ? "2D" : "3D";
+    strncpy(p.mode, modeStr, sizeof(p.mode) - 1);
+    p.mode[sizeof(p.mode) - 1] = 0;
+  }
+
+  // Save injectTorque (field 13)
+  if (ui.mouldEditInputs[13]) {
+    const char *txt = lv_textarea_get_text(ui.mouldEditInputs[13]);
+    if (txt)
+      p.injectTorque = atof(txt);
   }
 
   Storage::saveMoulds(ui.mouldProfiles, ui.mouldProfileCount);
@@ -1314,6 +1461,42 @@ void onMouldEdit(lv_event_t *) {
     setNotice(ui.mouldNotice, "Cannot open editor (LVGL mem).",
               lv_color_hex(0xffff7a));
     return;
+  }
+
+  ui.editingCurrentMould = (ui.selectedMould == 0);
+
+  // Configure View-Only mode for slot 0
+  if (ui.editingCurrentMould) {
+    if (ui.mouldEditViewOnlyNotice)
+      lv_obj_clear_flag(ui.mouldEditViewOnlyNotice, LV_OBJ_FLAG_HIDDEN);
+    if (ui.mouldEditTitle)
+      lv_label_set_text(ui.mouldEditTitle, "View Current Mould");
+    if (ui.mouldEditSaveBtn) {
+      lv_label_set_text(lv_obj_get_child(ui.mouldEditSaveBtn, 0), "OK");
+    }
+  } else {
+    if (ui.mouldEditViewOnlyNotice)
+      lv_obj_add_flag(ui.mouldEditViewOnlyNotice, LV_OBJ_FLAG_HIDDEN);
+    if (ui.mouldEditTitle)
+      lv_label_set_text(ui.mouldEditTitle, "Edit Mould");
+    if (ui.mouldEditSaveBtn) {
+      lv_label_set_text(lv_obj_get_child(ui.mouldEditSaveBtn, 0), "Save");
+    }
+  }
+
+  // Update field editability
+  for (int i = 0; i < MOULD_FIELD_COUNT; i++) {
+    lv_obj_t *input = ui.mouldEditInputs[i];
+    if (i == 12)
+      input = ui.mouldModeDropdown;
+    if (!input)
+      continue;
+
+    if (ui.editingCurrentMould) {
+      lv_obj_add_state(input, LV_STATE_DISABLED);
+    } else {
+      lv_obj_clear_state(input, LV_STATE_DISABLED);
+    }
   }
 
   // Populate fields
@@ -1350,27 +1533,32 @@ void onMouldEdit(lv_event_t *) {
         val = p.packTime;
         break;
       case 8:
-        val = p.coolingTime;
-        break;
-      case 9:
         val = p.fillAccel;
         break;
-      case 10:
+      case 9:
         val = p.fillDecel;
         break;
-      case 11:
+      case 10:
         val = p.packAccel;
         break;
-      case 12:
+      case 11:
         val = p.packDecel;
         break;
-      case 14:
+      case 13:
         val = p.injectTorque;
         break;
       }
       snprintf(buf, sizeof(buf), "%.2f", val);
     }
+    // Field 12 (mode) is a dropdown — handled separately below.
+    if (i == 12)
+      continue;
     lv_textarea_set_text(ui.mouldEditInputs[i], buf);
+  }
+  // Set mode dropdown
+  if (ui.mouldModeDropdown) {
+    uint16_t sel = (strcmp(p.mode, "3D") == 0) ? 1 : 0;
+    lv_dropdown_set_selected(ui.mouldModeDropdown, sel);
   }
 
   // Show panel
@@ -1402,7 +1590,6 @@ void onMouldNew(lv_event_t *) {
   newProfile.packSpeed = 2.0f;
   newProfile.packPressure = 40.0f;
   newProfile.packTime = 2.0f;
-  newProfile.coolingTime = 5.0f;
   newProfile.fillAccel = 100.0f;
   newProfile.fillDecel = 100.0f;
   newProfile.packAccel = 100.0f;
@@ -1743,10 +1930,16 @@ void createMainPanel() {
                              LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_label_set_text(ui.stateValue, "--");
 
-  ui.stateAction1 = createButton(ui.rightPanelMain, "Refresh State", 18, 235,
-                                 150, 52, onStateActionQueryState);
-  ui.stateAction2 = createButton(ui.rightPanelMain, "Refresh Error", 182, 235,
-                                 150, 52, onStateActionQueryError);
+  ui.stateAction1 =
+      createButton(ui.rightPanelMain, "", 18, 235, 150, 52, nullptr);
+  ui.stateAction2 =
+      createButton(ui.rightPanelMain, "", 182, 235, 150, 52, nullptr);
+  lv_obj_add_flag(ui.stateAction1, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(ui.stateAction2, LV_OBJ_FLAG_HIDDEN);
+
+  ui.stateAction3 = createButton(ui.rightPanelMain, "End of Day", 18, 310,
+                                 RIGHT_WIDTH - 36, 52, onNavigate);
+  lv_obj_add_flag(ui.stateAction3, LV_OBJ_FLAG_HIDDEN);
 
   createButton(ui.rightPanelMain, "Mould Settings", 18, 720, 150, 58,
                onNavigate,
@@ -1826,10 +2019,19 @@ void createMouldEditPanel() {
   lv_obj_set_style_text_font(title, &lv_font_montserrat_24,
                              LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_label_set_text(title, "Edit Mould");
+  ui.mouldEditTitle = title;
+
+  ui.mouldEditViewOnlyNotice = lv_label_create(ui.rightPanelMouldEdit);
+  lv_obj_set_pos(ui.mouldEditViewOnlyNotice, 18, 48);
+  lv_obj_set_style_text_color(ui.mouldEditViewOnlyNotice,
+                              lv_color_hex(0xfff0a0), 0);
+  lv_label_set_text(ui.mouldEditViewOnlyNotice,
+                    "Actual Loaded Mould, non-editable");
+  lv_obj_add_flag(ui.mouldEditViewOnlyNotice, LV_OBJ_FLAG_HIDDEN);
 
   ui.mouldEditScroll = lv_obj_create(ui.rightPanelMouldEdit);
-  lv_obj_set_pos(ui.mouldEditScroll, 18, 54);
-  lv_obj_set_size(ui.mouldEditScroll, RIGHT_WIDTH - 36, 598);
+  lv_obj_set_pos(ui.mouldEditScroll, 18, 138);
+  lv_obj_set_size(ui.mouldEditScroll, RIGHT_WIDTH - 36, 514);
   lv_obj_set_style_bg_color(ui.mouldEditScroll, lv_color_hex(0x1a222b),
                             LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_border_color(ui.mouldEditScroll, lv_color_hex(0x3a4a5a),
@@ -1839,6 +2041,12 @@ void createMouldEditPanel() {
   lv_obj_set_style_pad_all(ui.mouldEditScroll, 6,
                            LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_scrollbar_mode(ui.mouldEditScroll, LV_SCROLLBAR_MODE_ACTIVE);
+  // Prevent the container from consuming vertical gestures as scrolls before
+  // children (textareas) can register them as clicks. Without this, the top
+  // items are nearly impossible to tap because LVGL grabs the gesture first.
+  lv_obj_remove_flag(ui.mouldEditScroll, LV_OBJ_FLAG_SCROLL_CHAIN_VER);
+  lv_obj_remove_flag(ui.mouldEditScroll, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+  lv_obj_remove_flag(ui.mouldEditScroll, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
   int y = 6;
   for (int i = 0; i < MOULD_FIELD_COUNT; i++) {
@@ -1846,6 +2054,24 @@ void createMouldEditPanel() {
     lv_obj_set_pos(label, 4, y + 8);
     lv_obj_set_size(label, 160, LV_SIZE_CONTENT);
     lv_label_set_text(label, MOULD_FIELD_NAMES[i]);
+    if (i == 7 || i == 12 || i == 13) {
+      lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_BLUE), 0);
+    }
+
+    // Field 12: Mode dropdown (2D/3D) instead of textarea
+    if (i == 12) {
+      lv_obj_t *dd = lv_dropdown_create(ui.mouldEditScroll);
+      lv_obj_set_pos(dd, 168, y);
+      lv_obj_set_size(dd, 130, 34);
+      lv_dropdown_set_options(dd, "2D\n3D");
+      lv_dropdown_set_selected(dd, 0); // default 2D
+      lv_obj_set_style_text_align(dd, LV_TEXT_ALIGN_CENTER,
+                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+      ui.mouldModeDropdown = dd;
+      ui.mouldEditInputs[12] = nullptr; // not a textarea
+      y += 42;
+      continue;
+    }
 
     lv_obj_t *input = lv_textarea_create(ui.mouldEditScroll);
     lv_obj_set_pos(input, 168, y);
@@ -1882,8 +2108,8 @@ void createMouldEditPanel() {
     }
   }
 
-  createButton(ui.rightPanelMouldEdit, "Save", 18, 720, 150, 58,
-               onMouldEditSave);
+  ui.mouldEditSaveBtn = createButton(ui.rightPanelMouldEdit, "Save", 18, 720,
+                                     150, 58, onMouldEditSave);
   createButton(ui.rightPanelMouldEdit, "Cancel", 182, 720, 150, 58,
                onMouldEditCancel);
 
@@ -1926,8 +2152,8 @@ void createCommonPanel() {
   lv_label_set_text(title, "Common Settings");
 
   ui.commonScroll = lv_obj_create(ui.rightPanelCommon);
-  lv_obj_set_pos(ui.commonScroll, 18, 54);
-  lv_obj_set_size(ui.commonScroll, RIGHT_WIDTH - 36, 598);
+  lv_obj_set_pos(ui.commonScroll, 18, 138);
+  lv_obj_set_size(ui.commonScroll, RIGHT_WIDTH - 36, 514);
   lv_obj_set_style_bg_color(ui.commonScroll, lv_color_hex(0x1a222b),
                             LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_border_color(ui.commonScroll, lv_color_hex(0x3a4a5a),
@@ -1936,6 +2162,10 @@ void createCommonPanel() {
                                 LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_pad_all(ui.commonScroll, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_scrollbar_mode(ui.commonScroll, LV_SCROLLBAR_MODE_ACTIVE);
+  // Same scroll-chain fix as mouldEditScroll.
+  lv_obj_remove_flag(ui.commonScroll, LV_OBJ_FLAG_SCROLL_CHAIN_VER);
+  lv_obj_remove_flag(ui.commonScroll, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+  lv_obj_remove_flag(ui.commonScroll, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
   int y = 6;
   for (int i = 0; i < COMMON_FIELD_COUNT; i++) {
@@ -2033,24 +2263,151 @@ void createCommonPanel() {
 }
 
 void updateStateWidgets(const DisplayComms::Status &status) {
+  static char lastState[24] = {1}; // Force initial update
+  static bool lastEod = false;
+  static bool firstRun = true;
+
   const char *stateText = status.state[0] != '\0' ? status.state : "--";
+  bool stateChanged = (strcmp(stateText, lastState) != 0);
+  bool eodChanged = (status.endOfDayFlag != lastEod) || firstRun;
+
+  if (!stateChanged && !eodChanged) {
+    return;
+  }
+
+  // Preserve state for next check
+  strncpy(lastState, stateText, sizeof(lastState) - 1);
+  lastState[sizeof(lastState) - 1] = '\0';
+  lastEod = status.endOfDayFlag;
+  firstRun = false;
+
   setLabelTextIfChanged(ui.stateValue, stateText);
 
-  bool hasState = status.state[0] != '\0';
+  // Global EOD Frame - Only update if EOD changed
+  if (ui.globalEodFrame && eodChanged) {
+    if (status.endOfDayFlag) {
+      lv_obj_clear_flag(ui.globalEodFrame, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(ui.globalEodFrame, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
+  bool hasState = (status.state[0] != '\0');
   if (hasState) {
+    // Determine Y position based on state to prevent double-tap accidents
+    int btnY = 240; // Default Row 2
+    if (strcmp(stateText, "REFILL") == 0 || strcmp(stateText, "INJECT") == 0 ||
+        strcmp(stateText, "INIT_HOMED_ENCODER_ZEROED") == 0) {
+      btnY = 170; // Row 1
+    } else if (strcmp(stateText, "READY_TO_INJECT") == 0 ||
+               strcmp(stateText, "PURGE_ZERO") == 0 ||
+               strcmp(stateText, "RELEASE") == 0 ||
+               strcmp(stateText, "ANTIDRIP") == 0 ||
+               strcmp(stateText, "CONFIRM_MOULD_REMOVAL") == 0) {
+      btnY = 310; // Row 3
+    }
+    // COMPRESSION, HOLD_INJECTION, INIT_HOT_WAIT stay at Row 2 (240)
+
     if (ui.stateAction1) {
       lv_obj_clear_flag(ui.stateAction1, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_y(ui.stateAction1, btnY);
+      lv_obj_t *label = lv_obj_get_child(ui.stateAction1, 0);
+
+      // Only re-bind if state changed
+      if (stateChanged) {
+        lv_obj_remove_event_cb(ui.stateAction1, nullptr);
+
+        if (strcmp(stateText, "REFILL") == 0) {
+          if (label)
+            setLabelTextIfChanged(label, "Compress");
+          lv_obj_add_event_cb(ui.stateAction1, onStateActionGotoCompression,
+                              LV_EVENT_CLICKED, nullptr);
+        } else if (strcmp(stateText, "COMPRESSION") == 0) {
+          if (label)
+            setLabelTextIfChanged(label, "Abort to Refill");
+          lv_obj_add_event_cb(ui.stateAction1, onStateActionGotoRefill,
+                              LV_EVENT_CLICKED, nullptr);
+        } else if (strcmp(stateText, "READY_TO_INJECT") == 0) {
+          if (label)
+            setLabelTextIfChanged(label, "Purge Zero");
+          lv_obj_add_event_cb(ui.stateAction1, onStateActionGotoPurge,
+                              LV_EVENT_CLICKED, nullptr);
+        } else if (strcmp(stateText, "PURGE_ZERO") == 0) {
+          if (label)
+            setLabelTextIfChanged(label, "Stop Purge");
+          lv_obj_add_event_cb(ui.stateAction1, onStateActionGotoReady,
+                              LV_EVENT_CLICKED, nullptr);
+        } else if (strcmp(stateText, "INIT_HOT_WAIT") == 0 ||
+                   strcmp(stateText, "INIT_HOMED_ENCODER_ZEROED") == 0) {
+          if (label)
+            setLabelTextIfChanged(label, "HOME");
+          lv_obj_add_event_cb(ui.stateAction1, onStateActionGotoHome,
+                              LV_EVENT_CLICKED, nullptr);
+        } else {
+          lv_obj_add_flag(ui.stateAction1, LV_OBJ_FLAG_HIDDEN);
+        }
+      }
+    } else {
+      if (ui.stateAction1)
+        lv_obj_add_flag(ui.stateAction1, LV_OBJ_FLAG_HIDDEN);
     }
+
     if (ui.stateAction2) {
-      lv_obj_clear_flag(ui.stateAction2, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_t *label = lv_obj_get_child(ui.stateAction2, 0);
+      if (strcmp(stateText, "READY_TO_INJECT") == 0) {
+        lv_obj_clear_flag(ui.stateAction2, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_y(ui.stateAction2, btnY);
+        if (stateChanged) {
+          lv_obj_remove_event_cb(ui.stateAction2, nullptr);
+          if (label)
+            setLabelTextIfChanged(label, "Abort to Refill");
+          lv_obj_add_event_cb(ui.stateAction2, onStateActionGotoRefill,
+                              LV_EVENT_CLICKED, nullptr);
+        }
+      } else {
+        lv_obj_add_flag(ui.stateAction2, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+
+    // End of Day Button (stateAction3) - REFILL ONLY
+    if (ui.stateAction3) {
+      if (strcmp(stateText, "REFILL") == 0) {
+        lv_obj_clear_flag(ui.stateAction3, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_y(ui.stateAction3, 310);
+
+        // Always ensure the callback is there
+        lv_obj_remove_event_cb(ui.stateAction3, onStateActionToggleEndOfDay);
+        lv_obj_add_event_cb(ui.stateAction3, onStateActionToggleEndOfDay,
+                            LV_EVENT_CLICKED, nullptr);
+
+        // Update visual state (label and color)
+        lv_obj_t *label = lv_obj_get_child(ui.stateAction3, 0);
+        if (label) {
+          setLabelTextIfChanged(label, status.endOfDayFlag ? "EOD ACTIVE"
+                                                           : "End of Day");
+        }
+
+        if (status.endOfDayFlag) {
+          lv_obj_set_style_bg_color(ui.stateAction3, lv_color_hex(0x000000), 0);
+          lv_obj_set_style_border_width(ui.stateAction3, 2, 0);
+          lv_obj_set_style_border_color(ui.stateAction3, lv_color_hex(0x0000FF),
+                                        0);
+        } else {
+          lv_obj_set_style_bg_color(ui.stateAction3, lv_color_hex(0x2196F3), 0);
+          lv_obj_set_style_border_width(ui.stateAction3, 0, 0);
+        }
+      } else {
+        lv_obj_add_flag(ui.stateAction3, LV_OBJ_FLAG_HIDDEN);
+      }
     }
   } else {
-    if (ui.stateAction1) {
+    // Hide all
+    if (ui.stateAction1)
       lv_obj_add_flag(ui.stateAction1, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (ui.stateAction2) {
+    if (ui.stateAction2)
       lv_obj_add_flag(ui.stateAction2, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (ui.stateAction3)
+      lv_obj_add_flag(ui.stateAction3, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -2059,25 +2416,18 @@ void updateMouldListFromComms(const DisplayComms::MouldParams &mould) {
     return;
   }
 
+  bool nameChanged = strcmp(ui.lastMouldName, mould.name) != 0;
+
+  // Always update slot 0 with the latest controller data.
   if (ui.mouldProfileCount == 0) {
     ui.mouldProfileCount = 1;
-    ui.mouldProfiles[0] = mould;
-    strncpy(ui.lastMouldName, mould.name, sizeof(ui.lastMouldName) - 1);
-    ui.lastMouldName[sizeof(ui.lastMouldName) - 1] = '\0';
-    rebuildMouldList();
-    return;
   }
-
-  if (strcmp(ui.lastMouldName, mould.name) != 0) {
-    ui.mouldProfiles[0] = mould;
-    strncpy(ui.lastMouldName, mould.name, sizeof(ui.lastMouldName) - 1);
-    ui.lastMouldName[sizeof(ui.lastMouldName) - 1] = '\0';
-    rebuildMouldList();
-    return;
-  }
-
-  // Keep active profile data fresh even when the name doesn't change.
   ui.mouldProfiles[0] = mould;
+  if (nameChanged) {
+    strncpy(ui.lastMouldName, mould.name, sizeof(ui.lastMouldName) - 1);
+    ui.lastMouldName[sizeof(ui.lastMouldName) - 1] = '\0';
+  }
+  rebuildMouldList();
 }
 
 } // namespace
@@ -2099,7 +2449,6 @@ void storageSelfTest() {
     p.packSpeed = 3.0f + (float)i;
     p.packPressure = 25.0f + (float)i;
     p.packTime = 0.5f + (float)i * 0.1f;
-    p.coolingTime = 4.0f + (float)i;
     p.fillAccel = 100.0f + (float)i;
     p.fillDecel = 90.0f + (float)i;
     p.packAccel = 80.0f + (float)i;
@@ -2135,6 +2484,17 @@ void init() {
                   static_cast<int>(isObjReady(objects.common_settings)));
     return;
   }
+
+  // Create global EOD frame overlay
+  ui.globalEodFrame = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(ui.globalEodFrame, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lv_obj_clear_flag(ui.globalEodFrame, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(ui.globalEodFrame, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_opa(ui.globalEodFrame, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui.globalEodFrame, 10, 0);
+  lv_obj_set_style_border_color(ui.globalEodFrame, lv_color_hex(0x0000FF), 0);
+  lv_obj_set_style_border_side(ui.globalEodFrame, LV_BORDER_SIDE_FULL, 0);
+  lv_obj_add_flag(ui.globalEodFrame, LV_OBJ_FLAG_HIDDEN);
 
   // Load persisted moulds
   Storage::init();
