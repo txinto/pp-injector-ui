@@ -130,6 +130,13 @@ static void parseMessage(const char *msg) {
     return;
   }
 
+  if (strcasecmp(cmd, "EOD") == 0) {
+    if (rest) {
+      status.endOfDayFlag = (atoi(rest) != 0);
+    }
+    return;
+  }
+
   if (strcasecmp(cmd, "ERROR") == 0) {
     char field[64] = {0};
     if (rest) {
@@ -178,25 +185,22 @@ static void parseMessage(const char *msg) {
         mould.packTime = atof(field);
         break;
       case 8:
-        mould.coolingTime = atof(field);
-        break;
-      case 9:
         mould.fillAccel = atof(field);
         break;
-      case 10:
+      case 9:
         mould.fillDecel = atof(field);
         break;
-      case 11:
+      case 10:
         mould.packAccel = atof(field);
         break;
-      case 12:
+      case 11:
         mould.packDecel = atof(field);
         break;
-      case 13:
+      case 12:
         strncpy(mould.mode, field, sizeof(mould.mode) - 1);
         mould.mode[sizeof(mould.mode) - 1] = '\0';
         break;
-      case 14:
+      case 13:
         mould.injectTorque = atof(field);
         break;
       default:
@@ -423,6 +427,18 @@ void sendQueryCommon(void) { txLine("QUERY_COMMON"); }
 void sendQueryState(void) { txLine("QUERY_STATE"); }
 void sendQueryError(void) { txLine("QUERY_ERROR"); }
 
+void sendCmdGoto(const char *state) {
+  char buf[64];
+  snprintf(buf, sizeof(buf), "CMD|GOTO|%s", state);
+  txLine(buf);
+}
+
+void sendCmdToggle(const char *feature) {
+  char buf[64];
+  snprintf(buf, sizeof(buf), "CMD|TOGGLE|%s", feature);
+  txLine(buf);
+}
+
 bool sendMould(const MouldParams &params) {
   if (!isSafeForUpdate()) {
     return false;
@@ -430,13 +446,13 @@ bool sendMould(const MouldParams &params) {
 
   char message[320] = {0};
   snprintf(message, sizeof(message),
-           "MOULD|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%."
+           "MOULD|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%."
            "3f|%s|%.3f",
            params.name, params.fillVolume, params.fillSpeed,
            params.fillPressure, params.packVolume, params.packSpeed,
-           params.packPressure, params.packTime, params.coolingTime,
-           params.fillAccel, params.fillDecel, params.packAccel,
-           params.packDecel, params.mode, params.injectTorque);
+           params.packPressure, params.packTime, params.fillAccel,
+           params.fillDecel, params.packAccel, params.packDecel, params.mode,
+           params.injectTorque);
   txLine(message);
   return true;
 }
