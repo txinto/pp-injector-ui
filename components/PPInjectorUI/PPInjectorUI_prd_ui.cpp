@@ -1214,7 +1214,6 @@ void rebuildMouldList() {
       lv_obj_set_style_border_color(button, lv_color_hex(0x41505f),
                                     LV_PART_MAIN | LV_STATE_DEFAULT);
     }
-  }
   lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // Prevent jump on tap
   ui.mouldProfileButtons[i] = button;
   y += 54;
