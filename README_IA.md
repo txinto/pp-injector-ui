@@ -45,6 +45,10 @@ Notes:
 - If release generation fails due to missing/incomplete build artifacts, run the build command above and retry.
 - Follow script-provided error hints verbatim unless the user asks for a different flow.
 
+## Build Reporting Requirement
+- After each build execution, report the app partition free-space value shown by the build output (both percentage and bytes).
+- Treat this value as critical project health information and highlight it in the build summary.
+
 ## Path and Command Hygiene
 - Never expose developer-specific absolute paths (for example `/home/<user>/...`) in user-facing documentation, instructions, or suggested commands.
 - Prefer project-root-relative paths (for example `scripts/...`, `docs/...`) whenever possible.

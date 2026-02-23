@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -21,6 +22,23 @@ def read_version(version_file: Path) -> str:
     if not re.fullmatch(r"[A-Za-z0-9._-]+", version):
         raise ValueError(f"Invalid version '{version}' in {version_file}")
     return version
+
+
+def read_compiled_version(project_description_file: Path) -> str:
+    if not project_description_file.exists():
+        raise FileNotFoundError(f"Build metadata file not found: {project_description_file}")
+
+    try:
+        data = json.loads(project_description_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {project_description_file}: {exc}") from exc
+
+    compiled_version = str(data.get("project_version", "")).strip()
+    if not compiled_version:
+        raise ValueError(
+            f"Missing or empty 'project_version' in {project_description_file}"
+        )
+    return compiled_version
 
 
 def copy_file_preserve_rel(src: Path, rel_from: Path, dst_root: Path) -> None:
@@ -130,6 +148,19 @@ def print_variant_not_built_or_incomplete(build_dir: Path, missing: list[str] | 
     sys.stderr.write(msg)
 
 
+def print_version_mismatch(version_file: Path, expected: str, compiled: str, build_dir: Path) -> None:
+    msg = (
+        "ERROR: Build artifacts version does not match version.txt.\n"
+        f"version.txt ({version_file.name}): {expected}\n"
+        f"Compiled version (project_description.json): {compiled}\n"
+        f"Build directory checked: {build_dir}\n"
+        "Rebuild with the target version, then retry release packaging.\n"
+        "Suggested command in an ESP-IDF environment:\n"
+        "  idf.py -B build_ppinjectorelecrow -DVARIANT=PPInjectorElecrow -DSDKCONFIG=build_ppinjectorelecrow/sdkconfig build\n"
+    )
+    sys.stderr.write(msg)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Create PPInjector Elecrow release bundle from build artifacts"
@@ -195,6 +226,17 @@ def main() -> int:
         return 1
 
     version = read_version(version_file)
+    project_description = build_dir / "project_description.json"
+    try:
+        compiled_version = read_compiled_version(project_description)
+    except (FileNotFoundError, ValueError) as exc:
+        print_variant_not_built_or_incomplete(build_dir, [str(exc)])
+        return 1
+
+    if compiled_version != version:
+        print_version_mismatch(version_file, version, compiled_version, build_dir)
+        return 1
+
     release_dir = releases_dir / f"{args.product_name}_{version}"
     if release_dir.exists():
         shutil.rmtree(release_dir)
