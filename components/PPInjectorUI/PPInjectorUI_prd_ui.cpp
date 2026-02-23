@@ -154,6 +154,42 @@ void saveMoulds(const DisplayComms::MouldParams *moulds, int count) {
 
   ESP_LOGI(TAG, "Storage: saved %d mould profiles", count);
 }
+
+struct LocalSettings {
+  float heatTimeMin;
+};
+
+static constexpr const char *kLocalSettingsPath = "/spiffs/local.bin";
+
+void loadLocalSettings(float &heatTimeMin) {
+  if (!s_inited)
+    return;
+  FILE *f = fopen(kLocalSettingsPath, "rb");
+  if (!f) {
+    ESP_LOGI(TAG, "Storage: %s not found, using default", kLocalSettingsPath);
+    return;
+  }
+  LocalSettings settings;
+  if (fread(&settings, sizeof(settings), 1, f) == 1) {
+    heatTimeMin = settings.heatTimeMin;
+    ESP_LOGI(TAG, "Storage: loaded local heatTimeMin=%.2f", heatTimeMin);
+  }
+  fclose(f);
+}
+
+void saveLocalSettings(float heatTimeMin) {
+  if (!s_inited)
+    return;
+  FILE *f = fopen(kLocalSettingsPath, "wb");
+  if (!f) {
+    ESP_LOGE(TAG, "Storage: cannot open %s for write", kLocalSettingsPath);
+    return;
+  }
+  LocalSettings settings = {heatTimeMin};
+  fwrite(&settings, sizeof(settings), 1, f);
+  fclose(f);
+  ESP_LOGI(TAG, "Storage: saved local settings");
+}
 } // namespace Storage
 
 #ifndef SCREEN_DIAG_ONLY
@@ -215,12 +251,12 @@ const char *COMMON_FIELD_NAMES[] = {
     "Micro Duration (ms)", "Purge Up",         "Purge Down",
     "Purge Current",       "Antidrip Vel",     "Antidrip Current",
     "Release Dist",        "Release Trap Vel", "Release Current",
-    "Contactor Cycles",    "Contactor Limit",
+    "Contactor Cycles",    "Contactor Limit",  "Heat Time (min)",
 };
 
 const bool COMMON_FIELD_IS_INTEGER[] = {false, false, true,  true,  false,
                                         false, false, false, false, false,
-                                        false, false, true,  true};
+                                        false, false, true,  true,  false};
 
 constexpr int COMMON_FIELD_COUNT =
     sizeof(COMMON_FIELD_NAMES) / sizeof(COMMON_FIELD_NAMES[0]);
@@ -271,6 +307,8 @@ struct UiState {
   lv_obj_t *stateAction3 = nullptr;
   lv_obj_t *mainErrorLabel = nullptr;
   lv_obj_t *globalEodFrame = nullptr;
+  lv_obj_t *mainMouldDisplay =
+      nullptr; // Display currently loaded mould on main
 
   lv_obj_t *mouldList = nullptr;
   lv_obj_t *mouldNotice = nullptr;
@@ -296,6 +334,10 @@ struct UiState {
   lv_obj_t *commonDiscardOverlay = nullptr;
   bool commonDirty = false;
   bool suppressCommonEvents = false;
+
+  int refillStage = 0; // 0=None, 1=Refill, 2=Compression
+  float heatTimeMin = 10.0f;
+  float currentBlockVol = 0.0f;
 
   // Mould Edit State
   lv_obj_t *mouldEditScroll = nullptr;
@@ -341,6 +383,7 @@ void onMouldDelete(lv_event_t *e);
 void onMouldSend(lv_event_t *e);
 void syncMouldSendEditEnablement();
 void rebuildMouldList();
+void syncMainMouldDisplay();
 
 void disablePlungerAreaScroll() {
   lv_obj_t *locked[] = {
@@ -897,51 +940,66 @@ void updatePlungerPosition(float turns) {
 }
 
 void updateRefillBlocks(const DisplayComms::Status &status) {
-  float currentPos = status.encoderTurns;
+  float currentTurns = status.encoderTurns;
   const char *state = status.state;
 
+  // 3-Stage Registration: REFILL -> COMPRESSION -> READY_TO_INJECT
   if (strcmp(state, "REFILL") == 0) {
-    if (!ui.refillSequenceActive) {
-      ui.refillSequenceActive = true;
-      ui.startRefillPos = currentPos;
-      Serial.printf("PRD_UI: Refill sequence started at %.2f\n", currentPos);
+    if (ui.refillStage != 1) {
+      ui.refillStage = 1;
+      Serial.println("PRD_UI: Refill Stage 1 (Refill)");
     }
     ui.isRefilling = true;
-  } else {
+  } else if (strcmp(state, "COMPRESSION") == 0) {
+    if (ui.refillStage == 1) {
+      ui.refillStage = 2;
+      Serial.println("PRD_UI: Refill Stage 2 (Compression)");
+    }
     ui.isRefilling = false;
-  }
+  } else if (strcmp(state, "READY_TO_INJECT") == 0) {
+    if (ui.refillStage == 2) {
+      // Stage 3: Entered READY_TO_INJECT from COMPRESSION
+      // Calculate volume: total space below plunger minus already accounted
+      // blocks
+      float spaceBelowPlunger = TURNS_TO_BOTTOM - currentTurns;
+      if (spaceBelowPlunger < 0)
+        spaceBelowPlunger = 0;
 
-  if (strcmp(state, "READY_TO_INJECT") == 0 &&
-      strcmp(ui.lastState, "READY_TO_INJECT") != 0 && ui.refillSequenceActive) {
-    float spaceBelowPlunger = 360.5f - currentPos;
-    if (spaceBelowPlunger < 0) {
-      spaceBelowPlunger = 0;
-    }
-
-    float existingVolume = 0.0f;
-    for (int i = 0; i < ui.blockCount; i++) {
-      existingVolume += ui.refillBlocks[i].volume;
-    }
-
-    float delta = spaceBelowPlunger - existingVolume;
-    if (delta > 0.5f) {
-      if (ui.blockCount < 16) {
-        ui.refillBlocks[ui.blockCount] = RefillBlock(delta, millis(), true);
-        ui.blockCount++;
-        Serial.printf("PRD_UI: Refill block added vol=%.2f count=%d\n", delta,
-                      ui.blockCount);
-      } else {
-        Serial.println("PRD_UI: Refill block limit reached");
+      float existingVolume = 0.0f;
+      for (int i = 0; i < ui.blockCount; i++) {
+        existingVolume += ui.refillBlocks[i].volume;
       }
-    } else {
-      Serial.printf("PRD_UI: Refill block ignored delta=%.2f\n", delta);
-    }
 
-    ui.refillSequenceActive = false;
+      float delta = spaceBelowPlunger - existingVolume;
+      if (delta > 0.5f) {
+        if (ui.blockCount < 16) {
+          ui.refillBlocks[ui.blockCount] = RefillBlock(delta, millis(), true);
+          ui.blockCount++;
+          ui.currentBlockVol = delta;
+          Serial.printf("PRD_UI: Refill block added vol=%.2f count=%d\n", delta,
+                        ui.blockCount);
+        } else {
+          Serial.println("PRD_UI: Refill block limit reached");
+        }
+      }
+      ui.refillStage = 0;
+      Serial.println("PRD_UI: Refill Stage 3 Complete (Ready)");
+    } else if (strcmp(ui.lastState, "READY_TO_INJECT") != 0 &&
+               ui.refillStage != 0) {
+      // Interrupted sequence
+      ui.refillStage = 0;
+      Serial.println("PRD_UI: Refill Stage reset (interrupted)");
+    }
+  } else if (strcmp(state, "HOME") == 0 || strcmp(state, "INIT_HEATING") == 0) {
+    ui.refillStage = 0;
   }
 
-  if (currentPos > ui.lastFramePos) {
-    float consumedCm3 = currentPos - ui.lastFramePos;
+  // Selective Movement: Only consume blocks during Injection states
+  bool isMovingDown =
+      (strcmp(state, "INJECT") == 0 || strcmp(state, "HOLD_INJECTION") == 0);
+
+  if (isMovingDown && currentTurns > ui.lastFramePos) {
+    float consumedCm3 = currentTurns - ui.lastFramePos;
     if (consumedCm3 > 0.001f && consumedCm3 < 100.0f) {
       while (consumedCm3 > 0.001f && ui.blockCount > 0) {
         if (ui.refillBlocks[0].volume > consumedCm3) {
@@ -959,7 +1017,7 @@ void updateRefillBlocks(const DisplayComms::Status &status) {
     }
   }
 
-  ui.lastFramePos = currentPos;
+  ui.lastFramePos = currentTurns;
   strncpy(ui.lastState, state, sizeof(ui.lastState) - 1);
 }
 
@@ -988,16 +1046,37 @@ void renderRefillBlocksForBands(lv_obj_t **bands) {
       lv_obj_set_pos(band, -8, y);
       lv_obj_clear_flag(band, LV_OBJ_FLAG_HIDDEN);
 
-      uint32_t age = now - ui.refillBlocks[i].addedMs;
-      lv_color_t color;
-      if (age < 10000) {
-        color = lv_color_hex(0x3498db);
-      } else if (age < 30000) {
-        color = lv_color_hex(0xe67e22);
-      } else {
-        color = lv_color_hex(0xe74c3c);
+      // Fine black line at the top
+      lv_obj_set_style_border_side(band, LV_BORDER_SIDE_TOP, 0);
+      lv_obj_set_style_border_width(band, 1, 0);
+      lv_obj_set_style_border_color(band, lv_color_hex(0x000000), 0);
+
+      // Heating Gradient (16 stages from Blue to Red)
+      uint32_t ageMs = now - ui.refillBlocks[i].addedMs;
+      float heatTotalMs = ui.heatTimeMin * 60.0f * 1000.0f;
+      int stage = (heatTotalMs > 0) ? (int)(ageMs * 16 / heatTotalMs) : 15;
+      if (stage > 15)
+        stage = 15;
+
+      // Simple gradient interpolation Blue (0,0,255) -> Red (255,0,0)
+      uint8_t r = (stage * 255) / 15;
+      uint8_t b = 255 - r;
+      lv_obj_set_style_bg_color(band, lv_color_make(r, 0, b), 0);
+      lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+
+      // Block Overlay: Volume and Age (2 lines)
+      lv_obj_t *label = lv_obj_get_child(band, 0);
+      if (!label) {
+        label = lv_label_create(band);
+        lv_obj_center(label);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
       }
-      lv_obj_set_style_bg_color(band, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%.1f\n%lum", ui.refillBlocks[i].volume,
+               (unsigned long)(ageMs / 60000));
+      lv_label_set_text(label, buf);
     } else {
       lv_obj_add_flag(band, LV_OBJ_FLAG_HIDDEN);
     }
@@ -1041,6 +1120,12 @@ void onNavigate(lv_event_t *event) {
     }
     if (ui.commonNotice)
       lv_label_set_text(ui.commonNotice, "Edit and press Send.");
+  } else if (target == SCREEN_ID_MAIN) {
+    if (!ui.mouldQueriedOnce) {
+      DisplayComms::sendQueryMould();
+      ui.mouldQueriedOnce = true;
+    }
+    syncMainMouldDisplay();
   }
 }
 
@@ -1137,6 +1222,35 @@ void syncMouldSendEditEnablement() {
   }
 }
 
+void syncMainMouldDisplay() {
+  if (!isObjReady(ui.mainMouldDisplay))
+    return;
+
+  lv_obj_t *lbl = lv_obj_get_child(ui.mainMouldDisplay, 0);
+  if (!lbl)
+    return;
+
+  if (ui.mouldProfileCount > 0 && ui.mouldProfiles[0].name[0] != '\0') {
+    char safeName[sizeof(ui.mouldProfiles[0].name) + 12];
+    char tmp[sizeof(ui.mouldProfiles[0].name)];
+    strncpy(tmp, ui.mouldProfiles[0].name, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    snprintf(safeName, sizeof(safeName), "(current) %s", tmp);
+    lv_label_set_text(lbl, safeName);
+    // Applied current style (green)
+    lv_obj_set_style_bg_color(ui.mainMouldDisplay, lv_color_hex(0x1a3a2a), 0);
+    lv_obj_set_style_border_color(ui.mainMouldDisplay, lv_color_hex(0x2e6b44),
+                                  0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0x7fe8a0), 0);
+  } else {
+    lv_label_set_text(lbl, "(current) ...");
+    lv_obj_set_style_bg_color(ui.mainMouldDisplay, lv_color_hex(0x26303a), 0);
+    lv_obj_set_style_border_color(ui.mainMouldDisplay, lv_color_hex(0x41505f),
+                                  0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xffffff), 0);
+  }
+}
+
 void rebuildMouldList() {
   lv_mem_monitor_t mon_before;
   lv_mem_monitor(&mon_before);
@@ -1176,7 +1290,6 @@ void rebuildMouldList() {
 
   int y = 8;
   for (int i = 0; i < renderCount; i++) {
-    Serial.printf("PRD_UI: rebuild idx=%d/%d\n", i + 1, ui.mouldProfileCount);
     char safeName[sizeof(ui.mouldProfiles[i].name) + 12];
     safeName[0] = '\0';
     if (i == 0) {
@@ -1214,28 +1327,29 @@ void rebuildMouldList() {
       lv_obj_set_style_border_color(button, lv_color_hex(0x41505f),
                                     LV_PART_MAIN | LV_STATE_DEFAULT);
     }
-  lv_obj_clear_flag(button, LV_OBJ_FLAG_SCROLL_ON_FOCUS); // Prevent jump on tap
-  ui.mouldProfileButtons[i] = button;
-  y += 54;
-  if ((i & 1) == 1) {
-    uiYield();
+    lv_obj_clear_flag(button,
+                      LV_OBJ_FLAG_SCROLL_ON_FOCUS); // Prevent jump on tap
+    ui.mouldProfileButtons[i] = button;
+    y += 54;
+    if ((i & 1) == 1) {
+      uiYield();
+    }
   }
-}
 
-if (ui.selectedMould >= ui.mouldProfileCount) {
-  ui.selectedMould = -1;
-}
-Serial.println("PRD_UI: rebuild after loop before sync");
-syncMouldSendEditEnablement();
-Serial.println("PRD_UI: rebuild after sync");
-logUiState("rebuildMouldList");
-lv_mem_monitor_t mon_after;
-lv_mem_monitor(&mon_after);
-ESP_LOGD(TAG,
-         "LVGL mem after rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
-         (unsigned)mon_after.free_size, (unsigned)mon_after.used_pct,
-         (unsigned)mon_after.frag_pct, (unsigned)mon_after.free_biggest_size);
-Serial.println("PRD_UI: rebuild end");
+  if (ui.selectedMould >= ui.mouldProfileCount) {
+    ui.selectedMould = -1;
+  }
+  Serial.println("PRD_UI: rebuild after loop before sync");
+  syncMouldSendEditEnablement();
+  Serial.println("PRD_UI: rebuild after sync");
+  logUiState("rebuildMouldList");
+  lv_mem_monitor_t mon_after;
+  lv_mem_monitor(&mon_after);
+  ESP_LOGD(TAG,
+           "LVGL mem after rebuild: free=%u used_pct=%u frag_pct=%u largest=%u",
+           (unsigned)mon_after.free_size, (unsigned)mon_after.used_pct,
+           (unsigned)mon_after.frag_pct, (unsigned)mon_after.free_biggest_size);
+  Serial.println("PRD_UI: rebuild end");
 }
 
 void onMouldSend(lv_event_t *) {
@@ -1669,6 +1783,8 @@ double commonFieldValue(const DisplayComms::CommonParams &common,
     return common.contactorCycles;
   case 13:
     return common.contactorLimit;
+  case 14:
+    return ui.heatTimeMin;
   default:
     return 0.0;
   }
@@ -1731,6 +1847,10 @@ void assignCommonField(DisplayComms::CommonParams &common, int fieldIndex,
     break;
   case 11:
     common.releaseCurrent = value;
+    break;
+  case 14:
+    ui.heatTimeMin = value;
+    Storage::saveLocalSettings(ui.heatTimeMin);
     break;
   default:
     break;
@@ -1825,7 +1945,15 @@ bool sendCommonFromInputs() {
     if (!ui.commonInputs[i]) {
       continue;
     }
-    assignCommonField(toSend, i, lv_textarea_get_text(ui.commonInputs[i]));
+    if (i < 14) {
+      assignCommonField(toSend, i, lv_textarea_get_text(ui.commonInputs[i]));
+    } else if (i == 14) {
+      // Local only (Heat Time)
+      float value =
+          static_cast<float>(atof(lv_textarea_get_text(ui.commonInputs[i])));
+      ui.heatTimeMin = value;
+      Storage::saveLocalSettings(ui.heatTimeMin);
+    }
   }
 
   if (DisplayComms::sendCommon(toSend)) {
@@ -1949,6 +2077,22 @@ void createMainPanel() {
                onNavigate,
                reinterpret_cast<void *>(
                    static_cast<intptr_t>(SCREEN_ID_COMMON_SETTINGS)));
+
+  lv_obj_t *mouldHeader = lv_label_create(ui.rightPanelMain);
+  lv_obj_set_pos(mouldHeader, 18, 495);
+  lv_obj_set_style_text_font(mouldHeader, &lv_font_montserrat_16,
+                             LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(mouldHeader, lv_color_hex(0xff9fb2c7),
+                              LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_label_set_text(mouldHeader, "Current Mould");
+
+  ui.mainMouldDisplay =
+      createButton(ui.rightPanelMain, "(current) ...", 18, 530,
+                   RIGHT_WIDTH - 36, 46, onNavigate,
+                   reinterpret_cast<void *>(
+                       static_cast<intptr_t>(SCREEN_ID_MOULD_SETTINGS)));
+  lv_obj_set_style_border_width(ui.mainMouldDisplay, 1, 0);
+  syncMainMouldDisplay();
 
   ui.mainErrorLabel = lv_label_create(ui.rightPanelMain);
   lv_obj_set_pos(ui.mainErrorLabel, 18, 640);
@@ -2199,6 +2343,9 @@ void createCommonPanel() {
 
     ui.commonInputs[i] = input;
     y += 42;
+    if (i == 13) {
+      y += 10; // Extra gap before local block logic fields
+    }
     if ((i & 1) == 1) {
       uiYield();
     }
@@ -2431,6 +2578,7 @@ void updateMouldListFromComms(const DisplayComms::MouldParams &mould) {
     ui.lastMouldName[sizeof(ui.lastMouldName) - 1] = '\0';
   }
   rebuildMouldList();
+  syncMainMouldDisplay();
 }
 
 } // namespace
@@ -2503,6 +2651,7 @@ void init() {
   Storage::init();
   Storage::loadMoulds(ui.mouldProfiles, ui.mouldProfileCount,
                       MAX_MOULD_PROFILES);
+  Storage::loadLocalSettings(ui.heatTimeMin);
 
   // Keep the plunger column static (touch drag should not scroll the screen).
   disablePlungerAreaScroll();
