@@ -246,6 +246,11 @@ constexpr float PLUNGER_PX_PER_TURN =
 constexpr float REFILL_PX_PER_TURN = PLUNGER_PX_PER_TURN;
 constexpr int REFILL_STACK_BOTTOM_Y = 770;
 
+const uint32_t REFILL_BLOCK_COLORS[] = {0x0000FF, 0x2424DB, 0x4949B6, 0x6D6D92,
+                                        0x91916D, 0xB6B649, 0xDADA24, 0xFFFF00,
+                                        0xFFDF00, 0xFFBF00, 0xFFA000, 0xFF8000,
+                                        0xFF6000, 0xFF4000, 0xFF2000, 0xFF0000};
+
 const char *COMMON_FIELD_NAMES[] = {
     "Trap Accel",          "Compress Torque",  "Micro Interval (ms)",
     "Micro Duration (ms)", "Purge Up",         "Purge Down",
@@ -1051,17 +1056,15 @@ void renderRefillBlocksForBands(lv_obj_t **bands) {
       lv_obj_set_style_border_width(band, 1, 0);
       lv_obj_set_style_border_color(band, lv_color_hex(0x000000), 0);
 
-      // Heating Gradient (16 stages from Blue to Red)
+      // Heating Gradient (16 stages from Blue -> Yellow -> Red)
       uint32_t ageMs = now - ui.refillBlocks[i].addedMs;
       float heatTotalMs = ui.heatTimeMin * 60.0f * 1000.0f;
       int stage = (heatTotalMs > 0) ? (int)(ageMs * 16 / heatTotalMs) : 15;
       if (stage > 15)
         stage = 15;
 
-      // Simple gradient interpolation Blue (0,0,255) -> Red (255,0,0)
-      uint8_t r = (stage * 255) / 15;
-      uint8_t b = 255 - r;
-      lv_obj_set_style_bg_color(band, lv_color_make(r, 0, b), 0);
+      lv_obj_set_style_bg_color(band, lv_color_hex(REFILL_BLOCK_COLORS[stage]),
+                                0);
       lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
 
       // Block Overlay: Volume and Age (2 lines)
