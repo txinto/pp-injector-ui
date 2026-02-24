@@ -61,8 +61,6 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Publish PPInjector OTA binary to public firmware repo")
     ap.add_argument(
         "release_dir",
-        nargs="?",
-        default="releases/ppinjectorelecrow_0.0.1.3-ota",
         help="Release folder like releases/ppinjectorelecrow_<version>",
     )
     ap.add_argument(
