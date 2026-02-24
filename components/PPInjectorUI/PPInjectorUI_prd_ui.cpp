@@ -15,7 +15,6 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <vector>
 
 namespace {
 static const char *TAG = "PPInjectorUI_PRD";
@@ -234,9 +233,6 @@ constexpr float TURNS_TO_TOP = 22.53f;
 constexpr float TURNS_TO_BOTTOM = 360.5f;
 constexpr float TURNS_MIN = 0.0f;
 constexpr float TURNS_MAX = TURNS_TO_BOTTOM;
-constexpr int BARREL_INNER_TOP_Y = 0;
-constexpr int BARREL_INNER_HEIGHT = 793;
-constexpr int TIP_HEIGHT = 80;
 // Plunger calibration (keep aligned with the previously tuned behavior).
 constexpr int PLUNGER_TIP_ANCHOR_Y = 711;
 constexpr int PLUNGER_TIP_TRAVEL_PX = PLUNGER_TIP_ANCHOR_Y; // 711
@@ -1189,9 +1185,6 @@ void onNavigate(lv_event_t *event) {
   }
 }
 
-void onStateActionQueryState(lv_event_t *) { DisplayComms::sendQueryState(); }
-void onStateActionQueryError(lv_event_t *) { DisplayComms::sendQueryError(); }
-
 void onStateActionGotoReady(lv_event_t *) {
   DisplayComms::sendCmdGoto("READY_TO_INJECT");
 }
@@ -1253,7 +1246,6 @@ void syncMouldSendEditEnablement() {
       ui.selectedMould >= 0 && ui.selectedMould < ui.mouldProfileCount;
   // Slot 0 is the read-only current controller mould. Edit is allowed (view
   // mode) but Delete is blocked. Send is available for any selected slot.
-  bool isEditable = hasSelection /*&& ui.selectedMould > 0*/; // Edit = view OK
   bool isDeletable = hasSelection && ui.selectedMould > 0;
 
   setButtonEnabled(ui.mouldButtonEdit, hasSelection);
