@@ -45,6 +45,10 @@ Notas:
 - Si la generación de release falla por artefactos de build faltantes o incompletos, ejecuta el comando de build anterior y reintenta.
 - Sigue literalmente los mensajes de error y pistas de los scripts salvo que el usuario pida otro flujo.
 
+## Requisito de reporte de build
+- Tras cada ejecución de build, informa el valor de espacio libre de la partición app que aparece en la salida (tanto porcentaje como bytes).
+- Trata este valor como información crítica de salud del proyecto y destácalo en el resumen de build.
+
 ## Higiene de rutas y comandos
 - Nunca expongas rutas absolutas específicas de un desarrollador (por ejemplo `/home/<user>/...`) en documentación visible para el usuario, instrucciones o comandos sugeridos.
 - Prefiere rutas relativas a la raíz del proyecto (por ejemplo `scripts/...`, `docs/...`) siempre que sea posible.
