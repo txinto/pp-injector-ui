@@ -1756,19 +1756,19 @@ void onMouldNew(lv_event_t *) {
   newProfile.mode[1] = 'D';
   newProfile.mode[2] = '\0';
 
-  // Set default values for new profile
-  newProfile.fillVolume = 10.0f;
+  // Set default values for new profile (Safety-first: Low power/volume)
+  newProfile.fillVolume = 5.0f;
   newProfile.fillSpeed = 5.0f;
-  newProfile.fillPressure = 50.0f;
-  newProfile.packVolume = 2.0f;
-  newProfile.packSpeed = 2.0f;
-  newProfile.packPressure = 40.0f;
-  newProfile.packTime = 2.0f;
-  newProfile.fillAccel = 100.0f;
-  newProfile.fillDecel = 100.0f;
-  newProfile.packAccel = 100.0f;
-  newProfile.packDecel = 100.0f;
-  newProfile.injectTorque = 0.5f;
+  newProfile.fillPressure = 5.0f;
+  newProfile.packVolume = 5.0f;
+  newProfile.packSpeed = 5.0f;
+  newProfile.packPressure = 5.0f;
+  newProfile.packTime = 5.0f;
+  newProfile.fillAccel = 5.0f;
+  newProfile.fillDecel = 5.0f;
+  newProfile.packAccel = 5.0f;
+  newProfile.packDecel = 5.0f;
+  newProfile.injectTorque = 0.1f;
 
   ui.mouldProfiles[ui.mouldProfileCount] = newProfile;
   ui.mouldProfileCount++;
